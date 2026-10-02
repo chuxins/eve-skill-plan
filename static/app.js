@@ -34,6 +34,7 @@ const app = createApp({
     levels() { return this.meta ? this.meta.levels : [1, 2, 3, 4, 5]; },
     cats() { return this.meta ? this.meta.categories : []; },
     rows() { return this.plan ? this.plan.rows : []; },
+    steps() { return this.plan ? (this.plan.steps || []) : []; },
     rowsTodo() { return this.rows.filter(r => !r.ok); },
     rowsDone() { return this.rows.filter(r => r.ok); },
     summary() { return this.plan ? this.plan.summary : null; },

@@ -295,6 +295,14 @@ Object.assign(inst, opts.methods, published);
   eq(inst.rows.length, inst.summary.skills_missing, '默认 rows = 缺口技能数');
   eq(inst.rowsDone.length, 0, '默认不含已掌握技能');
   eq(inst.rowsTodo.length, inst.summary.skills_missing, 'skills_missing = rowsTodo');
+  ok(Array.isArray(inst.plan.steps) && inst.plan.steps.length > 0, '计划含逐级 steps');
+  ok(inst.plan.steps.length >= inst.plan.rows.length, 'steps ≥ rows（逐级展开）',
+    [inst.plan.steps.length, inst.plan.rows.length]);
+  ok(inst.plan.steps.every(s => s.level >= 1 && s.seconds > 0), '每步有等级与本步时长');
+  ok(inst.plan.steps.every((s, i, a) => i === 0 || s.end_seconds >= a[i - 1].end_seconds),
+    'steps 累计完成时间单调');
+  eq(inst.plan.steps[inst.plan.steps.length - 1].end_seconds, inst.summary.seconds,
+    '最后一步完成时间 = 总时长');
   ok(inst.summary.skills_total === inst.summary.skills_missing + inst.summary.skills_owned,
     'skills_total = 缺 + 已掌握', [inst.summary.skills_total, inst.summary.skills_missing, inst.summary.skills_owned]);
   eq(inst.summary.skills_total, 6, '乌鸦级需求共 6 项');

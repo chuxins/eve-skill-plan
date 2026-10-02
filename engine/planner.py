@@ -1,10 +1,12 @@
 """技能计划构建：把目标（舰船 / 装备 / 技能 / 职业路线）+ 当前技能 → 可执行清单。
 
 核心逻辑：
-1. 目标展开成「需求技能 → 等级」（engine.skills.SkillIndex.closure，同技能取最高等级）；
-2. 与当前技能等级比对得到缺口（按级拆分，便于显示 4 级 → 5 级需要多久）；
+1. 目标展开成「需求技能 → 等级」（engine.skills.SkillIndex.closure，同技能取最高等级；
+   技能目标会递归带出它自身的前置技能）；
+2. 与当前技能等级比对得到缺口（按级拆分：steps 每一级单列一行，便于显示 4 级 → 5 级需要多久）；
 3. 按「前置优先」拓扑排序，逐条累加时间轴（EVE 同一时间只能训一项技能，故时间相加）；
 4. 汇总总时长 / 总 SP / 缺口数量 / 每个目标的需求规模，供 UI 展示与导出。
+   rows 每技能一行（含逐级明细 levels），steps 把缺口技能按级展开成一行一级。
 """
 
 from engine import training
@@ -53,6 +55,41 @@ def _row(index, skill_tid, required, current, attrs):
     row["duration_short"] = training.encode_duration(row["seconds"])
     row["level_table"] = training.level_table(skill, attrs, current)
     return row
+
+
+def _steps(index, rows):
+    """把逐技能行展开为逐级训练步：每一级单列一行，含本步时长 / SP 与累计完成时间。
+
+    rows 按计划顺序（前置优先或用户选择的排序），同一技能内等级从小到大；
+    每步只计「这一级」的时长与 SP，完成时间按行序累计（EVE 同时只能训一项技能）。
+    已满足的技能没有待练级数，天然不产生 step。
+    """
+    steps, elapsed = [], 0.0
+    for row in rows:
+        for lv in row.get("levels") or []:
+            step = {
+                "tid": row["tid"], "name": row["name"], "name_en": row["name_en"],
+                "group": row["group"], "group_id": row["group_id"],
+                "rank": row["rank"],
+                "primary": row["primary"], "secondary": row["secondary"],
+                "primary_name": row["primary_name"], "secondary_name": row["secondary_name"],
+                "level": lv["level"],
+                "required": row["required"], "current": row["current"],
+                "ok": False,
+                "seconds": lv["seconds"], "sp": lv["sp"],
+                "targets": row.get("targets", []),
+                "prereqs": row.get("prereqs", []),
+            }
+            step["duration"] = training.format_duration(step["seconds"])
+            step["duration_short"] = training.encode_duration(step["seconds"])
+            step["start_seconds"] = round(elapsed, 1)
+            elapsed += step["seconds"]
+            step["end_seconds"] = round(elapsed, 1)
+            step["start_human"] = training.format_duration(step["start_seconds"])
+            step["end_human"] = training.format_duration(step["end_seconds"])
+            step["end_short"] = training.encode_duration(step["end_seconds"])
+            steps.append(step)
+    return steps
 
 
 def _targets(index, targets):
@@ -138,10 +175,13 @@ def build_plan(index, targets, current=None, attrs=None, options=None):
         row["end_human"] = training.format_duration(row["end_seconds"])
         row["end_short"] = training.encode_duration(row["end_seconds"])
 
+    steps = _steps(index, rows)              # 逐级展开：每一级单列一行
+
     summary = {
         "skills_total": len(need),
         "skills_missing": len(missing),
         "skills_owned": len(need) - len(missing),
+        "steps": len(steps),
         "sp": round(sum(r["sp"] for r in missing), 1),
         "seconds": round(elapsed, 1),
         "duration": training.format_duration(elapsed),
@@ -164,6 +204,7 @@ def build_plan(index, targets, current=None, attrs=None, options=None):
                                           if by_tid.get(s)), 1)} for t in tgt_list],
         "attributes": attrs,
         "rows": rows,
+        "steps": steps,
         "summary": summary,
     }
 

@@ -195,6 +195,17 @@ ok(st == 200 and p0["summary"]["skills_missing"] == 6 and len(p0["rows"]) == 6, 
    p0.get("summary"))
 ok(p0["rows"][0]["name"] == "飞船操控学" and p0["rows"][0]["seconds"] > 0, "行按前置排序",
    p0["rows"][0].get("name"))
+ok("steps" in p0 and len(p0["steps"]) > len(p0["rows"]), "计划含逐级 steps（每级一行）",
+   {"steps": len(p0.get("steps", [])), "rows": len(p0.get("rows", []))})
+ok(p0["steps"][0]["name"] == "飞船操控学" and p0["steps"][0]["level"] == 1,
+   "steps 首行 = 飞船操控学 Ⅰ（前置优先 + 逐级）", p0["steps"][0].get("name"))
+ok(all(s["level"] >= 1 and s["seconds"] > 0 and s["sp"] > 0 for s in p0["steps"]),
+   "每步含等级 / 本步时长 / 本步 SP")
+ok(all(p0["steps"][i]["end_seconds"] <= p0["steps"][i + 1]["end_seconds"]
+       for i in range(len(p0["steps"]) - 1)), "steps 累计完成时间单调递增")
+ok(len(p0["steps"]) == sum(len(r["levels"]) for r in p0["rows"]),
+   "steps 数 = 各缺口技能所需级数之和",
+   (len(p0["steps"]), sum(len(r["levels"]) for r in p0["rows"])))
 cur = {r["tid"]: r["required"] for r in p0["rows"][:3]}   # 用真实前置技能的 tid 造「已有」快照
 st, p1 = call("POST", "/api/plan", {"targets": targets, "current": cur, "attrs": attrs})
 ok(p1["summary"]["skills_missing"] == 3 and p1["summary"]["skills_total"] == 6, "带当前技能 → 3 项缺口",
@@ -213,6 +224,12 @@ st, p5 = call("POST", "/api/plan", {"targets": [{"kind": "career", "tid": 21, "p
 ok(st == 200 and p5["summary"]["skills_total"] > 20, "职业路线目标", p5["summary"]["skills_total"])
 st, p6 = call("POST", "/api/plan", {"targets": [{"kind": "skill", "tid": 3300, "level": 4}]})
 ok(st == 200 and any(r["name"] == "射击学" for r in p6["rows"]), "单个技能目标")
+st, p7 = call("POST", "/api/plan", {"targets": [{"kind": "skill", "tid": 3336, "level": 4}]})
+ok(st == 200 and p7["summary"]["skills_total"] > 1
+   and any(r["tid"] == 33097 for r in p7["rows"])
+   and any(r["tid"] == 3327 for r in p7["rows"]),
+   "技能目标自动带出前置（33097 盖伦特战列巡洋舰操作 / 3327 飞船操控学）",
+   p7.get("summary"))
 st, d = call("POST", "/api/plan", {"targets": []})
 ok(st == 400 and bool(d.get("error")), "空目标 → 400", st)
 st, d = call("POST", "/api/plan", {"targets": [{"kind": "type", "tid": "abc"}]})

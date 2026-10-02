@@ -41,6 +41,8 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
   （含直接需求与完整前置链），可直接「加为计划目标」
 - **职业路线**：官方的 40 条职业路线（如「加达里财富猎手」），含里程碑与其技能需求
 - **计划**：把「舰船类型 / 单个技能到 N 级 / 职业路线」加为目标，实时复算
+  - 自动带出目标所需的**完整前置技能**（含前置的前置）并**每一级单列一行**：如 飞船操控学 Ⅳ 会展开成
+    飞船操控学 Ⅰ / Ⅱ / Ⅲ / Ⅳ 四行，每行显示本步训练时长、SP 与累计完成时间
   - 角色已有等级（0–5）与**有效属性**（base + 植入体）决定训练时长与缺口
   - 排序：`前置优先`（拓扑序，可自上而下依次训练）/ `耗时最短`
   - `include_owned` 可把已满足的技能一并列出；已满足/待训练分区显示
@@ -60,9 +62,10 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
   `requirements(tid)` 递归前置展开（同技能取所需最高等级）、`topo_order` Kahn 拓扑排序（保证前置优先）、
   `closure` 完整前置链、`consumers` 反向索引（谁需要这个技能）
 - `engine/training.py`：SP/时长公式、`normalize_attrs`（属性缺失/非法时回退默认 17 点）
-- `engine/planner.py`：`plan(targets, current, attrs, options)` → `{rows, summary}`；
-  `rows` 按前置优先排序并带 `ok`（已满足）标记，`summary` 含
-  `skills_total / skills_missing / skills_owned / sp / seconds / duration / attributes / rate_note`
+- `engine/planner.py`：`plan(targets, current, attrs, options)` → `{rows, steps, summary}`；
+  `rows` 每技能一行、按前置优先排序并带 `ok`（已满足）标记与逐级明细 `levels`；`steps` 把每个缺口技能
+  的等级逐级展开（每一级一行，含本步时长 / SP 与累计完成时间）；`summary` 含
+  `skills_total / skills_missing / skills_owned / steps / sp / seconds / duration / attributes / rate_note`
 - `engine/store.py`：`plans` 表的存取（`data/app.db`）；`owner_cid` 按 SSO 登录角色隔离，旧库自动迁移（存量无主计划转为不可见）
 - `esi.py` / `oauth.py`：PKCE(S256) 授权、token 刷新、角色技能/属性/队列/技能点读取；
   token 目录 `~/.eve-skill-plan/tokens/<cid>.json`（`EVE_SKILL_PLAN_TOKEN_DIR` 可覆盖）
@@ -146,10 +149,10 @@ Vue 用本地文件 `static/vendor/vue.global.prod.js`（3.5.13，**含模板编
 ## 测试
 
 ```bash
-python3 tests/smoke_http.py     # HTTP 冒烟（经 nginx /skills/ → Flask）：85 项断言
-                                #   token 目录里没有授权角色时 83 项（真实角色断言自动跳过）
+python3 tests/smoke_http.py     # HTTP 冒烟（经 nginx /skills/ → Flask）：91 项断言
+                                #   token 目录里没有授权角色时 89 项（真实角色断言自动跳过）
                                 #   直连后端（EVE_SKILL_PLAN_BASE=http://127.0.0.1:8091）再少 2 项 nginx 专有断言
-node tests/smoke_frontend.js    # 前端冒烟（Node + vm，无浏览器/jsdom）：102 项断言（无授权角色时 99 项）
+node tests/smoke_frontend.js    # 前端冒烟（Node + vm，无浏览器/jsdom）：107 项断言（无授权角色时 104 项）
 node tests/check_template.js    # 前端离线校验：语法 + 模板编译 + 标识符 + 模板函数发布 + 6 种状态渲染冒烟
                                 #   + 移动端适配审计（断点 / 单栏切换 / 触控目标 / 溢出）
 node tests/check_browser.js     # 真浏览器冒烟（无头 Chrome，没装浏览器自动跳过）：控制台零报错 + DOM 真渲染
@@ -186,12 +189,13 @@ node --check static/app.js      # 单文件语法检查
 
 - `tests/smoke_http.py` 覆盖：静态入口（`/skills` → 301、首页占位符注入、资源版本号）、元信息/技能搜索（含
   裸 UTF-8 与 latin-1 乱码容错）、技能与类型/职业详情、计划复算（从零 / 带 `current` / `include_owned` /
-  排序 / 带 `character_id` / 职业 / 单技能 / 空目标 400 / 非法 tid 400）、TXT（localized 格式 / 逐行等级 / 中英文名）、
+  排序 / 带 `character_id` / 职业 / 单技能 / **技能目标自动带前置** / **逐级 `steps`** / 空目标 400 / 非法 tid 400）、
+  TXT（localized 格式 / 逐行等级 / 中英文名）、
   计划 CRUD + `run`、角色 overview 与 OAuth（授权地址含 PKCE + scope、回调缺参 400）。
   可用环境变量调整：`EVE_SKILL_PLAN_BASE`（默认 `http://127.0.0.1/skills`；设成 `http://127.0.0.1:8091`
   则直连后端，跳过 2 条 nginx 专有断言）、`EVE_SKILL_PLAN_PORT`（8091）、
   `EVE_SKILL_PLAN_CHAR`（测试角色，默认 2124544250；token 目录为空时相关断言自动跳过）。
-  断言总数随「token 目录里有没有角色」浮动：nginx 入口 85 / 83 项，直连后端 83 / 81 项。
+  断言总数随「token 目录里有没有角色」浮动：nginx 入口 91 / 89 项，直连后端 89 / 87 项。
 - `tests/smoke_frontend.js` 用 `node:vm` 加载 `util.js` + `app.js`（stub 掉 `Vue.createApp` / `localStorage` /
   `fetch` / DOM），直接驱动真实的 `data/computed/methods`，断言格式化函数、搜索、目标增删、复算、
   保存/载入/导出、角色隔离（登录只显示当前角色 / 退出登录清会话）、缓存与 `login()`；`BASE` 环境变量可指向任意后端。

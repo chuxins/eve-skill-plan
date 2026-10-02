@@ -411,7 +411,7 @@ tr.done td{color:var(--m)}
       <template v-else>
         <div class="empty" v-if="!plan">左栏「计划」里添加目标后点「复算」，这里显示逐技能训练清单</div>
         <template v-else>
-          <h3 class="sec">训练计划 <span class="m small">共 {{summary.skills_total}} 项技能，缺 {{summary.skills_missing}} 项</span></h3>
+          <h3 class="sec">训练计划 <span class="m small">共 {{summary.skills_total}} 项技能 · 缺 {{summary.skills_missing}} 项 · {{steps.length}} 步</span></h3>
           <div class="card">
             <div class="row wrap">
               <span class="tag">总时长 <b class="y">{{summary.duration}}</b></span>
@@ -441,25 +441,23 @@ tr.done td{color:var(--m)}
           </div>
 
           <div class="card">
-            <h3 class="sec">待训练（{{rowsTodo.length}} 项，按当前排序）</h3>
+            <h3 class="sec">待训练（{{steps.length}} 步 · {{rowsTodo.length}} 项技能，按当前排序）</h3>
             <div class="tw"><table>
-              <thead><tr><th>技能</th><th>组</th><th>需求</th><th>当前</th><th>缺口</th><th>训练时间</th><th>SP</th><th>完成于</th><th>预计时间点</th><th></th></tr></thead>
+              <thead><tr><th>技能 · 等级</th><th>组</th><th>从</th><th>训练时间</th><th>SP</th><th>完成于（累计）</th><th>预计时间点</th><th></th></tr></thead>
               <tbody>
-                <tr v-for="r in rowsTodo" :key="r.tid">
-                  <td class="nm"><a @click="jumpSkill(r.tid)">{{r.name}}</a></td>
-                  <td>{{r.group}}</td>
-                  <td>{{lvRoman(r.required)}}</td>
-                  <td>{{lvRoman(r.current)}}</td>
-                  <td>{{r.levels.map(l=>lvRoman(l.level)).join('')}}</td>
-                  <td class="y">{{r.duration}}</td>
-                  <td>{{n(r.sp)}}</td>
-                  <td>{{r.end_human}}</td>
-                  <td class="m" :title="fmtWhen(r.end_seconds)">{{fmtShort(r.seconds)}}</td>
-                  <td><span class="skill-btn" @click="addSkillTarget(r, r.required)">+</span></td>
+                <tr v-for="s in steps" :key="s.tid + '-' + s.level">
+                  <td class="nm"><a @click="jumpSkill(s.tid)">{{s.name}}</a> <b>{{lvRoman(s.level)}}</b></td>
+                  <td>{{s.group}}</td>
+                  <td>{{lvRoman(s.level - 1)}}</td>
+                  <td class="y">{{s.duration}}</td>
+                  <td>{{n(s.sp)}}</td>
+                  <td>{{s.end_human}}</td>
+                  <td class="m" :title="fmtWhen(s.end_seconds)">{{fmtShort(s.end_seconds)}}</td>
+                  <td><span class="skill-btn" @click="addSkillTarget(s, s.required)">+</span></td>
                 </tr>
               </tbody>
             </table></div>
-            <div class="small m" style="margin-top:6px">「完成于」= 从开始训练到该技能练完所需的累计时间（EVE 同一时间只能训练一项技能）</div>
+            <div class="small m" style="margin-top:6px">「完成于」= 从开始训练到该步练完的累计时间（EVE 同一时间只能训练一项技能）；目标技能的前置技能会自动加入计划，并逐级单列一行</div>
           </div>
 
           <div class="card" v-if="rowsDone.length">

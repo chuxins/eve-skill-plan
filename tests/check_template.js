@@ -377,13 +377,20 @@ inst.plan = {
     { tid: 3301, name: '加达里巡洋舰', group: '舰船指挥', required: 4, current: 4,
       levels: [], duration: '—', sp: 0, end_human: '—', end_seconds: 0, seconds: 0, ok: true },
   ],
-  summary: { skills_total: 2, skills_missing: 1, skills_owned: 1, duration: '1天4小时', sp: 1234567,
+  steps: [
+    { tid: 3300, name: '加达里战列舰', group: '舰船指挥', required: 5, current: 3, level: 4,
+      duration: '12小时', sp: 12000, end_human: '12小时', end_seconds: 43200, seconds: 43200, ok: false },
+    { tid: 3300, name: '加达里战列舰', group: '舰船指挥', required: 5, current: 3, level: 5,
+      duration: '16小时', sp: 13000, end_human: '1天4小时', end_seconds: 90061, seconds: 46861, ok: false },
+  ],
+  summary: { skills_total: 2, skills_missing: 1, skills_owned: 1, steps: 2, duration: '1天4小时', sp: 1234567,
              rate_note: '训练速率 22.5 SP/分钟', seconds: 90061,
              attributes: { charisma: 20, intelligence: 20, memory: 20, perception: 20, willpower: 20 } },
 };
 renderState('计划页签 + 复算结果',
-  ['训练计划', '共 2 项技能，缺 1 项', '总时长', '1天4小时', '总 SP 1.2M', '已满足 1 项',
-   '属性 魅力 20', '需求 · 乌鸦级', '待训练（1 项', 'ⅣⅤ', '2.5万', '1d1h1m1s', TIME, '已满足（1 项）']);
+  ['训练计划', '共 2 项技能 · 缺 1 项 · 2 步', '总时长', '1天4小时', '总 SP 1.2M', '已满足 1 项',
+   '属性 魅力 20', '需求 · 乌鸦级', '待训练（2 步 · 1 项技能', '加达里战列舰',
+   'Ⅳ', 'Ⅴ', 'Ⅲ', '12小时', '16小时', '1d1h1m1s', TIME, '已满足（1 项）']);
 
 console.log(`渲染冒烟通过：${renders} 种状态全部渲染成功（模板函数发布 + 渲染代理语义都已覆盖）`);
 

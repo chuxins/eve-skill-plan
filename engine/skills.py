@@ -191,6 +191,7 @@ class SkillIndex:
                 tid, lv = int(item[0]), int(item[1] or 1)
                 if lv > need.get(tid, 0):
                     need[tid] = lv
+                stack.append(tid)          # 技能目标也要递归展开它自身的前置技能
             else:
                 stack.append(int(item))
         seen = set()
