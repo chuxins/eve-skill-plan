@@ -373,15 +373,17 @@ Object.assign(inst, opts.methods, published);
   eq(inst.targets.length, 2, '载入计划恢复 2 个目标');
   eq(inst.plan.summary.skills_total, beforeTotal, '载入复算结果与保存时一致');
   eq(inst.planName, inst.saved[0].name, '计划名回填');
-  // 导出按「从零」口径（不依赖测试角色已掌握多少技能）：TXT 应覆盖全部需求行
+  // 导出按「从零」口径（不依赖测试角色已掌握多少技能）：先把 plan 对齐到同口径，再断言逐级行数 = steps
   const savedCurrent = inst.current;
   inst.current = {};
+  await inst.recalc();
   await inst.exportTxt();
   inst.current = savedCurrent;
   const txtLines = lastTxt.split('\n').filter(l => l.trim());
   ok(txtLines.every(l => l.startsWith('<localized hint="') && /<\/localized> [1-5]$/.test(l)),
     '每行格式 <localized hint="英文">中文*</localized> 等级', txtLines[0]);
-  ok(txtLines.length >= inst.plan.rows.length, 'TXT 含所有技能行', [txtLines.length, inst.plan.rows.length]);
+  ok(txtLines.length === inst.plan.steps.length, 'TXT 逐级一行（行数 = steps）',
+    [txtLines.length, inst.plan.steps.length]);
   ok(inst.plan.rows.every(r => lastTxt.includes(r.name)), 'TXT 含每个技能名');
   ok(clicked.includes('a'), '触发了下载点击');
   ok(lastDownload.endsWith('.txt') && lastDownload.startsWith(

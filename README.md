@@ -46,7 +46,7 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
   - 角色已有等级（0–5）与**有效属性**（base + 植入体）决定训练时长与缺口
   - 排序：`前置优先`（拓扑序，可自上而下依次训练）/ `耗时最短`
   - `include_owned` 可把已满足的技能一并列出；已满足/待训练分区显示
-  - **导出 TXT**：EVE 技能计划文本（`<localized hint="英文名">中文名*</localized> 等级`，每行一项，可粘贴导入游戏 / 第三方规划工具）
+  - **导出 TXT**：EVE 技能计划文本（`<localized hint="英文名">中文名*</localized> 等级`，与计划页一致**每一级一行**，可粘贴导入游戏 / 第三方规划工具）
   - **保存计划**：需先「登录 EVE 角色」（EVE SSO）；命名保存到 `data/app.db` 并按登录角色隔离，列表里可载入（用保存时的目标与快照复算）或 `refresh` 用当前角色重算，可删除
 - **角色与属性 / SSO 登录**：页头「登录」走 EVE SSO（PKCE）；授权成功即**登录**并签发会话 Cookie
   （`esp_session`，HttpOnly，30 天，密钥持久化在 `data/.session_secret`，可用 `EVE_SKILL_PLAN_SECRET` 覆盖）；
@@ -149,8 +149,8 @@ Vue 用本地文件 `static/vendor/vue.global.prod.js`（3.5.13，**含模板编
 ## 测试
 
 ```bash
-python3 tests/smoke_http.py     # HTTP 冒烟（经 nginx /skills/ → Flask）：91 项断言
-                                #   token 目录里没有授权角色时 89 项（真实角色断言自动跳过）
+python3 tests/smoke_http.py     # HTTP 冒烟（经 nginx /skills/ → Flask）：92 项断言
+                                #   token 目录里没有授权角色时 90 项（真实角色断言自动跳过）
                                 #   直连后端（EVE_SKILL_PLAN_BASE=http://127.0.0.1:8091）再少 2 项 nginx 专有断言
 node tests/smoke_frontend.js    # 前端冒烟（Node + vm，无浏览器/jsdom）：107 项断言（无授权角色时 104 项）
 node tests/check_template.js    # 前端离线校验：语法 + 模板编译 + 标识符 + 模板函数发布 + 6 种状态渲染冒烟
@@ -190,12 +190,12 @@ node --check static/app.js      # 单文件语法检查
 - `tests/smoke_http.py` 覆盖：静态入口（`/skills` → 301、首页占位符注入、资源版本号）、元信息/技能搜索（含
   裸 UTF-8 与 latin-1 乱码容错）、技能与类型/职业详情、计划复算（从零 / 带 `current` / `include_owned` /
   排序 / 带 `character_id` / 职业 / 单技能 / **技能目标自动带前置** / **逐级 `steps`** / 空目标 400 / 非法 tid 400）、
-  TXT（localized 格式 / 逐行等级 / 中英文名）、
+  TXT（localized 格式 / **逐级展开**（每一级一行）/ 中英文名）、
   计划 CRUD + `run`、角色 overview 与 OAuth（授权地址含 PKCE + scope、回调缺参 400）。
   可用环境变量调整：`EVE_SKILL_PLAN_BASE`（默认 `http://127.0.0.1/skills`；设成 `http://127.0.0.1:8091`
   则直连后端，跳过 2 条 nginx 专有断言）、`EVE_SKILL_PLAN_PORT`（8091）、
   `EVE_SKILL_PLAN_CHAR`（测试角色，默认 2124544250；token 目录为空时相关断言自动跳过）。
-  断言总数随「token 目录里有没有角色」浮动：nginx 入口 91 / 89 项，直连后端 89 / 87 项。
+  断言总数随「token 目录里有没有角色」浮动：nginx 入口 92 / 90 项，直连后端 90 / 88 项。
 - `tests/smoke_frontend.js` 用 `node:vm` 加载 `util.js` + `app.js`（stub 掉 `Vue.createApp` / `localStorage` /
   `fetch` / DOM），直接驱动真实的 `data/computed/methods`，断言格式化函数、搜索、目标增删、复算、
   保存/载入/导出、角色隔离（登录只显示当前角色 / 退出登录清会话）、缓存与 `login()`；`BASE` 环境变量可指向任意后端。

@@ -240,11 +240,14 @@ st, body = call("POST", "/api/plan/txt", {"targets": targets, "current": {}, "at
 text = body.decode("utf-8")
 lines = [ln for ln in text.split("\n") if ln.strip()]
 ok(st == 200 and not body.startswith(b"\xef\xbb\xbf"), "TXT 无 BOM（纯文本）", st)
-ok(len(lines) == 6, "TXT 6 行（乌鸦级 6 项需求，无表头/汇总）", len(lines))
+ok(len(lines) == 17, "TXT 17 行（乌鸦级逐级展开 17 步，无表头/汇总）", len(lines))
 ok(all(ln.startswith('<localized hint="') for ln in lines), "每行以 <localized hint= 开头", lines[0])
 ok(all(ln.split("</localized> ", 1)[1] in "12345" for ln in lines), "每行结尾为 1-5 目标等级", lines[-1])
-ok(sorted(int(ln.rsplit(" ", 1)[1]) for ln in lines) == [1, 3, 3, 3, 3, 4],
-   "目标等级与乌鸦级需求一致（飞船操控学 4 / 战列舰 1 / 其余 3）", lines)
+ok(sorted(int(ln.rsplit(" ", 1)[1]) for ln in lines) == sorted(s["level"] for s in p0["steps"]),
+   "TXT 逐级等级与 plan.steps 一致（飞船操控学 Ⅰ-Ⅳ / 战列舰 Ⅰ / 其余 Ⅰ-Ⅲ）", lines)
+nav = [ln for ln in lines if "飞船操控学" in ln]
+ok(len(nav) == 4 and [int(ln.rsplit(" ", 1)[1]) for ln in nav] == [1, 2, 3, 4],
+   "飞船操控学逐级 4 行（Ⅰ → Ⅳ）", nav)
 ok("飞船操控学" in text and "Caldari Battleship" in text, "TXT 含中英文技能名")
 
 print("== 计划保存 / SSO 隔离（Flask test_client + 临时库，不碰线上数据）")

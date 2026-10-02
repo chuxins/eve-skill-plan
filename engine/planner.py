@@ -210,12 +210,17 @@ def build_plan(index, targets, current=None, attrs=None, options=None):
 
 
 def plan_txt(index, plan):
-    """计划 → EVE 技能计划文本（eve-skill.com 兼容格式），每行一项：
+    """计划 → EVE 技能计划文本（eve-skill.com 兼容格式），与 UI 的逐级 steps 一致，每一级一行：
     <localized hint="英文名">中文名*</localized> 目标等级
+    例：飞船操控学 Ⅳ → Ⅰ / Ⅱ / Ⅲ / Ⅳ 四行（每行是这一步要练到的等级）。
     """
+    steps = plan.get("steps")
+    if steps:                                   # 有逐级 steps 时按 steps 输出（每一级一行）
+        items = [(s["name_en"], s["name"], s["level"]) for s in steps]
+    else:                                       # 兼容无 steps 的旧结构：每技能一行、目标等级
+        items = [(r["name_en"], r["name"], r["required"]) for r in plan["rows"]]
     return "\n".join(
-        f'<localized hint="{r["name_en"]}">{r["name"]}*</localized> {r["required"]}'
-        for r in plan["rows"])
+        f'<localized hint="{en}">{zh}*</localized> {lv}' for en, zh, lv in items)
 
 
 def skill_pairs(index, plan):
