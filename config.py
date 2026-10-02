@@ -30,7 +30,7 @@ TOKEN_DIR = os.environ.get("EVE_SKILL_PLAN_TOKEN_DIR") or os.path.expanduser(
 _CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
 # 公网基址：OAuth 成功后回跳前端（本站挂在 nginx 的 /skills/ 子路径下）
-PUBLIC_BASE = os.environ.get("EVE_SKILL_PLAN_URL", "http://8.138.203.48/skills").rstrip("/")
+PUBLIC_BASE = os.environ.get("EVE_SKILL_PLAN_URL", "http://8.156.88.102/skills").rstrip("/")
 
 PORT = int(os.environ.get("EVE_SKILL_PLAN_PORT") or 8091)
 

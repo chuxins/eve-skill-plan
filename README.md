@@ -2,7 +2,7 @@
 
 Flask + Vue 单页技能规划站：**技能库 / 需求查询 / 职业路线 / 计划** 四个主标签 + 常驻「角色与属性」面板，
 按角色已有技能与有效属性算「还缺哪些技能、各缺几级、预计训练多久」，可保存计划、导出 EVE 技能计划 TXT。
-页面挂在 nginx 的 `/skills/` 子路径下：**http://8.138.203.48/skills/**
+页面挂在 nginx 的 `/skills/` 子路径下：**http://8.156.88.102/skills/**
 
 ## 运行
 
@@ -247,7 +247,7 @@ GitHub 仓库 Secrets（Settings → Secrets and variables → Actions，与 eve
 
 | Secret    | 值 |
 |-----------|----|
-| `SSH_HOST` | 服务器公网 IP `8.138.203.48` |
+| `SSH_HOST` | 服务器公网 IP `8.156.88.102` |
 | `SSH_USER` | `root`（需能执行 sudo） |
 | `SSH_KEY`  | 用于 SSH 登录服务器的私钥（公钥已加入服务器 `authorized_keys`） |
 
@@ -264,20 +264,20 @@ GitHub 仓库 Secrets（Settings → Secrets and variables → Actions，与 eve
 {
   "client_id": "1ea3b22467d64f37ae6b5ea7a800a8de",
   "client_secret": "eat_…",
-  "callback_url": "http://8.138.203.48/skills/oauth/callback"
+  "callback_url": "http://8.156.88.102/skills/oauth/callback"
 }
 ```
 
 - EVE 开发者后台登记的「回调地址」须**逐字符等于** `callback_url`（不一致会报 `invalid redirect_uri`）。
   实测本站可用的两种写法（任选其一登记即可，程序两种都兼容）：
-  - `http://8.138.203.48/skills/oauth/callback` ← 首选，`/api/oauth/url` 实际发送的就是它
-  - `http://8.138.203.48/skills/`（把回调登记成站点根）——SSO 会把 `?code=…&state=…` 送到根路径，
+  - `http://8.156.88.102/skills/oauth/callback` ← 首选，`/api/oauth/url` 实际发送的就是它
+  - `http://8.156.88.102/skills/`（把回调登记成站点根）——SSO 会把 `?code=…&state=…` 送到根路径，
     `webapp.py` 的 `page_index()` 检测到 `code`+`state` 后 302 转交 `./oauth/callback`，流程照常完成
 - 该公网地址由 nginx 反代到本站（`location /skills/ → 127.0.0.1:8091/`，Flask 侧看到的是 `/oauth/callback`）；
   `callback_url` 里必须写浏览器看到的**公网地址**，不能写 `127.0.0.1`
 - 授权范围：`esi-skills.read_skills.v1` + `esi-skills.read_skillqueue.v1`（属性接口也要求 skills 读权限）
 - 环境变量逐字段覆盖：`EVE_CLIENT_ID` / `EVE_CLIENT_SECRET` / `EVE_CALLBACK_URL`；
-  公网基址 `EVE_SKILL_PLAN_URL`（默认 `http://8.138.203.48/skills`）、`EVE_SKILL_PLAN_PORT`（8091）、
+  公网基址 `EVE_SKILL_PLAN_URL`（默认 `http://8.156.88.102/skills`）、`EVE_SKILL_PLAN_PORT`（8091）、
   `EVE_SKILL_PLAN_DB`（技能索引路径）、`EVE_SKILL_PLAN_TOKEN_DIR`（角色 token 目录）
 - **换 EVE 应用后必须重新授权一次**：EVE 的 `refresh_token` 与签发它的应用绑定，用新应用去刷老 token
   实测得到 `400 {"error":"invalid_grant","error_description":"Invalid refresh token. Character grant missing/expired."}`，
