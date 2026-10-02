@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="eve-skill-planner">
+  <rect width="64" height="64" rx="12" fill="#14161a"/>
+  <rect x="3" y="3" width="58" height="58" rx="10" fill="none" stroke="#2e333d" stroke-width="2"/>
+  <!-- 舰船侧影（俯视） -->
+  <path d="M32 9 L41 32 L36 52 L32 46 L28 52 L23 32 Z" fill="#7aa2ff"/>
+  <path d="M32 9 L32 46 L36 52 L32 52 Z" fill="#9cbcff" opacity=".75"/>
+  <!-- 装机准星（装配/模拟） -->
+  <circle cx="32" cy="26" r="9" fill="none" stroke="#5fe08b" stroke-width="2.5" opacity=".9"/>
+  <path d="M32 14 v5 M32 33 v5 M20 26 h5 M39 26 h5" stroke="#5fe08b" stroke-width="2.5" stroke-linecap="round" opacity=".9"/>
+</svg>

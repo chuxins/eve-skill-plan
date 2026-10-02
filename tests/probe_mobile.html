@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>移动端探针</title>
+<style>
+  body{margin:0;font:13px/1.45 monospace;background:#fff;color:#000}
+  #result{white-space:pre-wrap;margin:0;padding:6px}
+  #holder{position:absolute;left:-3000px;top:0}
+</style>
+</head>
+<body>
+<pre id="result">running</pre>
+<div id="holder"></div>
+<script>
+/* 移动端探针（真浏览器验证，配合 tests/check_mobile.js 使用）
+ * 这个页面不由站点自己提供：check_mobile.js 会起一个本地反代，把这个文件放在 /probe.html，
+ * 其余请求原样转发到站点 —— 这样探针与被测页面**同源**，才能读 iframe 里的 computedStyle、
+ * 量真实尺寸、模拟点击。检查结果写成 PASS / FAIL 行放进 #result，
+ * 由无头 Chrome 的 --dump-dom 取回并判定。
+ * 视口切换用 iframe 的真实宽度：媒体查询看的是 iframe 的布局视口，等于把手机/桌面搬进来。 */
+const out = [];
+const pre = document.getElementById('result');
+function line(ok, label, extra) {
+  out.push((ok ? 'PASS ' : 'FAIL ') + label +
+    (ok || extra === undefined || extra === null ? '' : ' <' + extra + '>'));
+  pre.textContent = out.join('\n');
+}
+const appPath = new URLSearchParams(location.search).get('app') || '/';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function waitFor(fn, ms, what) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    let v = null;
+    try { v = fn(); } catch (e) {}
+    if (v) return v;
+    await sleep(50);
+  }
+  line(false, '等待超时：' + what);
+  return null;
+}
+
+(async () => {
+  const f = document.createElement('iframe');
+  const setSize = (width, height) => {
+    f.style.width = width + 'px'; f.style.height = height + 'px';
+    f.setAttribute('width', width); f.setAttribute('height', height);
+  };
+  try {
+    setSize(390, 844);
+    f.src = appPath;
+    document.getElementById('holder').appendChild(f);
+    await new Promise(r => f.addEventListener('load', r, { once: true }));
+    const w = f.contentWindow, d = f.contentDocument;
+    const cs = el => w.getComputedStyle(el);
+    const px = v => parseFloat(v) || 0;
+    const box = el => { const r = el.getBoundingClientRect(); return Math.round(r.width) + 'x' + Math.round(r.height); };
+    const panes = () => ['.l', '.c', '.r'].map(s => d.querySelector('main > ' + s)).filter(Boolean);
+    const visible = () => panes().filter(el => cs(el).display !== 'none').map(el => el.className.trim());
+
+    line(!!d.querySelector('html'), 'iframe 里的页面已加载：' + f.getAttribute('src'));
+    const booted = await waitFor(() => d.querySelector('header h1') && d.querySelectorAll('.tabs button').length === 4 &&
+      d.querySelectorAll('.attr-in').length === 5, 25000, 'Vue 应用启动完成（页签 + 属性输入框）');
+    if (booted) {
+      const main = d.querySelector('main'), nav = d.querySelector('nav.mnav');
+      const metaSpan = d.querySelector('header .meta');
+      const btns = nav ? Array.from(nav.querySelectorAll('button')) : [];
+      const navH = btns.map(b => Math.round(b.getBoundingClientRect().height));
+      const navMinH = btns.length ? parseFloat(cs(btns[0]).minHeight) || 0 : 0;
+
+      line(px(cs(main).width) <= 390, '视口真是手机宽度（main ' + box(main) + '）');
+      line(!!nav && cs(nav).display === 'flex', '手机端底部导航可见', nav && cs(nav).display);
+      line(btns.length === 3 && navMinH >= 44 && navH.every(h => h >= 40),
+        '底部导航按钮 min-height ' + (btns.length ? cs(btns[0]).minHeight : '-') +
+        '（实测 ' + navH.join('/') + 'px）');
+      const tabsBtn = d.querySelector('.tabs button');
+      line(!!tabsBtn && (parseFloat(cs(tabsBtn).minHeight) || 0) >= 44,
+        '页签按钮 min-height ' + (tabsBtn ? cs(tabsBtn).minHeight : '-'));
+      line(/mp-l/.test(main.className), 'main 的 class 跟着 mpane（mp-l）', main.className);
+      line(visible().length === 1 && visible()[0] === 'l', '手机端一次只显示一栏，默认「列表」', visible().join(','));
+      line(!!metaSpan && cs(metaSpan).display === 'none', '手机端隐藏头部统计文字');
+      const inp = d.querySelector('main > .l input');
+      line(!!inp && px(cs(inp).fontSize) >= 16, '输入框字号 >= 16px（iOS 聚焦不放大）', inp && cs(inp).fontSize);
+
+      btns[1] && btns[1].click(); await sleep(150);
+      line(visible().length === 1 && visible()[0] === 'c', '点底部「详情」只显示详情栏', visible().join(','));
+      btns[2] && btns[2].click(); await sleep(150);
+      line(visible().length === 1 && visible()[0] === 'r', '点底部「角色」只显示角色栏', visible().join(','));
+      btns[0] && btns[0].click(); await sleep(150);
+      line(visible().length === 1 && visible()[0] === 'l', '点底部「列表」回到列表栏', visible().join(','));
+
+      /* 职业路线：列表项 → 点一下应当自动跳到详情栏（isMobile 生效的证据） */
+      d.querySelectorAll('.tabs button')[2].click();
+      const row = await waitFor(() => d.querySelector('main > .l .item-row'), 25000, '职业路线列表');
+      const rowH = row ? Math.round(row.getBoundingClientRect().height) : 0;
+      const rowMinH = row ? parseFloat(cs(row).minHeight) || 0 : 0;
+      line(!!row && rowMinH >= 44 && rowH >= 40,
+        '职业路线行 min-height ' + (row ? cs(row).minHeight : '-') + '（实测 ' + rowH + 'px）');
+      if (row) row.click();
+      const c = d.querySelector('main > .c');
+      const jumped = await waitFor(() => visible()[0] === 'c', 25000, '点列表项自动切到详情栏');
+      line(!!jumped, '手机端点列表项自动跳到详情栏', visible().join(','));
+      const detail = await waitFor(() => /里程碑|技能需求/.test(c.textContent), 25000, '详情内容渲染');
+      line(!!detail, '详情栏渲染出内容（' + c.textContent.slice(0, 24).replace(/\s+/g, ' ') + '…）');
+      line(c.clientWidth > 0 && c.scrollHeight > 0, '详情栏尺寸正常 ' + box(c));
+      line(c.scrollWidth <= c.clientWidth + 2, '详情栏没有横向溢出（宽表格自己滚）', c.scrollWidth + '/' + c.clientWidth);
+      line(d.documentElement.scrollWidth <= 392, '整页没有横向溢出', d.documentElement.scrollWidth);
+
+      /* 技能库：「全部组」筛选一下才有列表（先切回列表栏，隐藏栏里的行量不出高度） */
+      d.querySelectorAll('.tabs button')[0].click();
+      btns[0] && btns[0].click(); await sleep(150);
+      const chip = d.querySelector('main > .l .chips .chip');
+      line(!!chip, '技能库有分组筛选 chip', chip && box(chip));
+      if (chip) chip.click();
+      const srow = await waitFor(() => d.querySelector('main > .l .item-row'), 25000, '技能列表');
+      const srowH = srow ? Math.round(srow.getBoundingClientRect().height) : 0;
+      const srowMinH = srow ? parseFloat(cs(srow).minHeight) || 0 : 0;
+      line(!!srow && srowMinH >= 44 && srowH >= 40,
+        '技能列表行 min-height ' + (srow ? cs(srow).minHeight : '-') + '（实测 ' + srowH + 'px，触控目标）');
+      if (srow) srow.click();
+      const skillJump = await waitFor(() => /训练时间|前置技能/.test(d.querySelector('main > .c').textContent),
+        25000, '技能详情');
+      line(!!skillJump, '手机端从技能库也能点进详情（训练时间渲染）');
+
+      /* 放大到桌面宽度：三栏回来、底部导航消失（CSS 断点）
+       * 顺手派发一次真的 resize 事件：app.js 就是监听它的（虚拟时间下事件派发时刻不确定，
+       * 主动派发既确定又不失真实性——matchMedia 读的仍是当前 iframe 宽度） */
+      setSize(1280, 800);
+      w.dispatchEvent(new Event('resize'));
+      await sleep(250);
+      line(visible().length === 3, '桌面宽度下三栏同时可见', visible().join(','));
+      line(cs(d.querySelector('nav.mnav')).display === 'none', '桌面宽度下底部导航隐藏');
+      line(cs(main).display === 'grid' && cs(main).gridTemplateColumns.split(' ').length === 3,
+        '桌面宽度下 main 是三栏网格', cs(main).display + ' / ' + cs(main).gridTemplateColumns);
+
+      /* 缩回手机宽度：单栏回来，点列表项仍要自动跳详情（说明 resize 后 isMobile 跟上了） */
+      setSize(390, 844);
+      w.dispatchEvent(new Event('resize'));
+      await sleep(250);
+      line(visible().length === 1, '缩回手机宽度又变回单栏', visible().join(','));
+      btns[0] && btns[0].click(); await sleep(150);
+      line(visible()[0] === 'l', '底部「列表」把栏位切回列表', visible().join(','));
+      d.querySelectorAll('.tabs button')[2].click();
+      const row2 = await waitFor(() => d.querySelector('main > .l .item-row'), 25000, '缩回手机后的职业路线列表');
+      if (row2) row2.click();
+      const back = await waitFor(() => visible()[0] === 'c', 15000, '点列表切到详情栏');
+      line(!!back, '缩回手机宽度后 isMobile 已更新（点列表自动跳详情）', visible().join(','));
+    } else {
+      line(false, '页面没启动完成，后面的布局检查都跳过');
+    }
+  } catch (e) {
+    line(false, '探针异常：' + (e && e.message ? e.message : e));
+  }
+  out.push('DONE');
+  pre.textContent = out.join('\n');
+})();
+</script>
+</body>
+</html>
