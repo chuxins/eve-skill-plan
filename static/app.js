@@ -15,7 +15,8 @@ const app = createApp({
       /* 左右栏宽度（px）：由 .gutter 拖拽手柄调整，存 localStorage，刷新后保留 */
       lw: 330, rw: 372,
       meta: null, busy: '', err: '', toast: '',
-      // 角色 / 属性（loginCid/loginName 是服务端会话里的 SSO 登录身份，保存计划按它隔离）
+      // 角色 / 属性（loginCid/loginName 是服务端会话里的 SSO 登录身份；技能读取也按它隔离，
+      // 只能读当前登录角色，不可切换 —— 切换角色需先退出登录再重新登录）
       chars: [], cid: null, cname: '', current: {}, attrs: {}, queue: null, totalSp: null,
       loginCid: null, loginName: '',
       // 技能库
@@ -58,7 +59,7 @@ const app = createApp({
       if (q.get('cid')) {
         this.tab = 'plan';
         history.replaceState(null, '', './');
-        this.flash('授权成功，已切换到该角色');
+        this.flash('登录成功，已载入该角色的技能');
       }
     },
     flash(msg) { this.toast = msg; setTimeout(() => { this.toast = ''; }, 4000); },
@@ -145,13 +146,20 @@ const app = createApp({
         this.err = e.message;
       } finally { this.busy = ''; }
     },
-    async forgetChar(ch) {
-      if (!confirm(`退出「${ch.name}」？（仅删除本站本地 token，不影响其他站点）`)) return;
-      await API(`api/characters/${ch.id}`, { method: 'DELETE' });
-      if (this.cid === ch.id) { this.cid = null; this.current = {}; this.cname = ''; }
-      clearCharCache(ch.id);
-      await this.loadChars();
-      this.flash('已退出该角色');
+    async logout() {
+      // 退出登录：清服务端 SSO 会话 + 本地角色数据（保留 token，重新登录无需再次授权）。
+      // 切换角色 = 先退出登录 → 再重新 EVE SSO 登录。
+      const cid = this.loginCid;
+      if (!cid) return;
+      try { await API(`api/characters/${cid}`, { method: 'DELETE' }); } catch (e) { /* 会话已失效也照常退出 */ }
+      this.loginCid = null; this.loginName = '';
+      this.chars = []; this.cid = null; this.cname = '';
+      this.current = {}; this.queue = null; this.totalSp = null;
+      this.attrs = { charisma: 17, intelligence: 17, memory: 17, perception: 17, willpower: 17 };
+      cacheDel('cid'); clearCharCache(cid);
+      this.flash('已退出登录，切换角色请重新通过 EVE SSO 登录');
+      await this.loadSaved();
+      this.recalc();
     },
     async login() {
       try {

@@ -71,10 +71,10 @@ const fetchStub = async (p, o) => {
   return r;
 };
 
-/* SSO 隔离后，计划保存/载入/删除需要服务端会话；Node 里没有浏览器 Cookie 也没有真实 EVE SSO，
- * 所以 /api/plans* 这几个接口在测试里用进程内桩模拟「已登录」的服务端契约
- * （真实服务端的 401 鉴权与角色隔离由 tests/smoke_http.py 用 Flask test_client 逐条断言）。
- * 其余接口（含 /api/plan、/api/plan/txt）仍全部打真实后端。 */
+/* SSO 隔离后，计划保存/载入/删除与角色列表/退出需要服务端会话；Node 里没有浏览器 Cookie
+ * 也没有真实 EVE SSO，所以 /api/plans* 与 /api/characters* 这几个接口在测试里用进程内桩
+ * 模拟「已登录」的服务端契约（真实服务端的 401 鉴权与角色隔离由 tests/smoke_http.py 用
+ * Flask test_client 逐条断言）。其余接口（含 /api/plan、/api/plan/txt）仍全部打真实后端。 */
 let mockAuthed = false;              // 模拟「服务端会话里有登录角色」
 const planStore = [];                // 桩里的「当前角色的已保存计划」
 let nextPlanId = 1;
@@ -128,6 +128,23 @@ function mockPlans(p, o) {
     }
     if (!plan) return jsonResp({ error: '没有这个计划：' + pid }, 404);
     return jsonResp({ plan });
+  }
+  if (url === 'api/characters' && method === 'GET') {
+    if (mockAuthed) {
+      return jsonResp({ characters: [{ id: 1234567, name: '冒烟测试角色', scopes: [], can_read_skills: false }],
+        login: { cid: 1234567, name: '冒烟测试角色' } });
+    }
+    return jsonResp({ characters: [], login: null });
+  }
+  const cd = url.match(/^api\/characters\/(\d+)$/);
+  if (cd && method === 'DELETE') return jsonResp({ logged_out: true, id: Number(cd[1]) });
+  const ov = url.match(/^api\/characters\/(\d+)\/overview$/);
+  if (ov && method === 'GET') {
+    if (mockAuthed && Number(ov[1]) === 1234567) {
+      return jsonResp({ id: 1234567, name: '冒烟测试角色', skills: { 3327: 5 }, total_sp: 15000000,
+        attributes: { charisma: 17, intelligence: 17, memory: 17, perception: 17, willpower: 17 }, queue: [] });
+    }
+    return jsonResp({ error: '未登录无法读取该角色的技能' }, 401);
   }
   return null;                       // 未命中 → 走真实后端
 }
@@ -368,6 +385,22 @@ Object.assign(inst, opts.methods, published);
   await inst.delSaved(pid);
   eq(inst.saved.length, 0, '删除后已保存计划为空');
   mockAuthed = false;                          // 复位「会话状态」桩
+
+  section('角色隔离：登录只显示当前角色，退出登录清会话');
+  mockAuthed = true;
+  await inst.loadChars(1234567);               // 模拟「登录后重载角色列表」（服务端只返回登录角色）
+  eq(inst.loginCid, 1234567, '登录后 loginCid 生效');
+  eq(inst.chars.length, 1, '角色列表只含当前登录角色（无切换入口）', inst.chars);
+  eq(Number(inst.chars[0].id), 1234567, '列表项即登录角色');
+  eq(Number(inst.cid), 1234567, 'cid 自动选中当前登录角色');
+  await inst.logout();                         // 退出登录：仅清会话 + 本地角色数据
+  eq(inst.loginCid, null, '退出后 loginCid 为 null');
+  eq(inst.chars, [], '退出后角色列表为空');
+  eq(inst.cid, null, '退出后 cid 为空');
+  eq(inst.charName, '未选角色', '退出后回到「未选角色」');
+  eq(inst.current, {}, '退出后技能表清空');
+  eq(U.cacheGet('cid', 1e9), null, '退出后本地 cid 缓存清除');
+  mockAuthed = false;
 
   section('缓存与登录');
   U.cacheSet('cid', 123);

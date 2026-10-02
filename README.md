@@ -30,6 +30,8 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
 已保存计划存在 `data/app.db`（SQLite，表 `plans`），与技能索引库分开，删 `skills.db` 不影响存档。
 每条计划带 `owner_cid`（创建它的 SSO 登录角色）：**未登录不能保存**（服务端返回 401），
 登录后也只能看到 / 修改 / 删除自己创建的计划，角色之间互相隔离；旧库首次启动自动迁移。
+技能读取同样按登录角色隔离：只能读取**当前登录角色**的技能列表（未登录 401、非当前角色 403），
+`/api/characters` 只返回当前登录角色 —— 前端没有「切换角色」入口，切换需先退出登录再重新登录。
 
 ## 功能
 
@@ -46,7 +48,9 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
   - **保存计划**：需先「登录 EVE 角色」（EVE SSO）；命名保存到 `data/app.db` 并按登录角色隔离，列表里可载入（用保存时的目标与快照复算）或 `refresh` 用当前角色重算，可删除
 - **角色与属性 / SSO 登录**：页头「登录」走 EVE SSO（PKCE）；授权成功即**登录**并签发会话 Cookie
   （`esp_session`，HttpOnly，30 天，密钥持久化在 `data/.session_secret`，可用 `EVE_SKILL_PLAN_SECRET` 覆盖）；
-  已授权角色直接可选，显示角色名、技能点、有效属性（可手改/用预设）、**当前训练队列**（剩余时间/完成时间）、「退出登录」注销该角色
+  **只能读取当前登录角色的技能**（未登录 401 / 非当前角色 403）：角色面板只显示当前登录角色及其角色名、
+  技能点、有效属性（可手改/用预设）、**当前训练队列**（剩余时间/完成时间），**没有「切换角色」入口**；
+  切换角色需先「退出登录」（仅清会话，保留 token）再重新登录
 - **属性/时长口径**：`SP(L) = 250 × rank × 2^(2.5L − 2.5)`；速率 = `主属性 + 副属性 / 2` SP/分钟；
   只估算「技能等级从 0 升到目标等级」的时间，不含角色当前等级内的技能点进度（与 pyfa 口径一致）
 
@@ -71,21 +75,22 @@ GET    /healthz                          健康检查 + 索引计数
 GET    /api/meta                         元信息（技能数/职业数/技能组、等级、类别）
 GET    /api/skillgroups                  技能组树
 GET    /api/skills?q=&group_id=&limit=    技能搜索（limit 上限 500）
-GET    /api/skill/<tid>?character_id=     技能详情（描述/属性/逐级时间/前置/被需求，可带角色当前等级）
+GET    /api/skill/<tid>?character_id=     技能详情（描述/属性/逐级时间/前置/被需求；character_id 仅限当前登录角色）
 GET    /api/types?q=&limit=               类型搜索（舰船/装备/弹药/无人机/建筑/技能）
-GET    /api/type/<tid>?character_id=      该类型的递归需求技能（含直接需求与前置链）
+GET    /api/type/<tid>?character_id=      该类型的递归需求技能（含直接需求与前置链；character_id 仅限当前登录角色）
 GET    /api/careers                       职业路线列表
 GET    /api/career/<plan_id>              职业路线详情（里程碑 + 技能需求）
-POST   /api/plan                          复算计划 {targets,current,attrs,character_id,options}
+POST   /api/plan                          复算计划 {targets,current,attrs,character_id,options}（character_id 仅限当前登录角色）
 POST   /api/plan/txt                      导出 TXT（同一入参，返回 text/plain 技能计划文本）
 GET    /api/plans                         已保存计划列表
 POST   /api/plans                         保存计划 {name,targets,current,attrs,character_id}
 GET    /api/plans/<id>                    计划详情
 DELETE /api/plans/<id>                    删除计划
 POST   /api/plans/<id>/run                载入计划并复算 {refresh,character_id,attrs}
-GET    /api/characters                    已授权角色（读本站 token 目录）
-DELETE /api/characters/<cid>              注销该角色（删本地 token）
-GET    /api/characters/<cid>/overview     角色概览（技能等级/有效属性/训练队列/技能点）
+GET    /api/characters                    当前登录角色（未登录 → 空列表；只列登录角色，无切换入口）
+DELETE /api/characters/<cid>              退出登录（仅清会话，保留 token；只能退出当前登录角色）
+GET    /api/characters/<cid>/overview     角色概览（技能等级/有效属性/训练队列/技能点；仅当前登录角色可读，
+                                          未登录 401 / 非当前角色 403）
 GET    /api/oauth/url                     生成 SSO 授权地址（PKCE，带 state）
 GET    /oauth/start                       直接 302 到 EVE SSO
 GET    /oauth/callback                    授权回调：换 token → 写 token 目录 → 302 回 ./?cid=<id>
@@ -125,7 +130,8 @@ Vue 用本地文件 `static/vendor/vue.global.prod.js`（3.5.13，**含模板编
   所以 `util.js` 里的显示函数必须在 `app.js` 末尾 `Object.assign(app.config.globalProperties, {...})` 里显式挂上；
   新增/删除模板函数后 `node tests/check_template.js`、`node tests/smoke_frontend.js` 会立刻报出来
 - 页头「登录」→ `/api/oauth/url` → EVE SSO → `/skills/oauth/callback` → 302 回 `./?cid=<id>`，
-  前端读到 `?cid=` 后切换到该角色并 `history.replaceState` 清掉查询串；SSO 失败带 `?sso_error=` 显示错误
+  前端读到 `?cid=` 后载入该角色并 `history.replaceState` 清掉查询串；SSO 失败带 `?sso_error=` 显示错误；
+  登录后**只能读取当前登录角色**（`/api/characters` 只返回它），切换角色需先「退出登录」再重新登录
 - **移动端适配（纯 CSS 媒体查询，JS 只管状态）**：桌面是三栏 grid（330px / 1fr / 372px），
   - `≤1200px`：三栏收窄到 290px / 1fr / 330px，不换布局；
   - `≤900px`：**单栏 + 底部导航**（列表 / 详情 / 角色），`main` 的 class 跟着 `mpane` 走
@@ -140,10 +146,10 @@ Vue 用本地文件 `static/vendor/vue.global.prod.js`（3.5.13，**含模板编
 ## 测试
 
 ```bash
-python3 tests/smoke_http.py     # HTTP 冒烟（经 nginx /skills/ → Flask）：60 项断言
-                                #   token 目录里没有授权角色时 58 项（角色相关断言自动跳过）
+python3 tests/smoke_http.py     # HTTP 冒烟（经 nginx /skills/ → Flask）：85 项断言
+                                #   token 目录里没有授权角色时 83 项（真实角色断言自动跳过）
                                 #   直连后端（EVE_SKILL_PLAN_BASE=http://127.0.0.1:8091）再少 2 项 nginx 专有断言
-node tests/smoke_frontend.js    # 前端冒烟（Node + vm，无浏览器/jsdom）：85 项断言（无授权角色时 82 项）
+node tests/smoke_frontend.js    # 前端冒烟（Node + vm，无浏览器/jsdom）：102 项断言（无授权角色时 99 项）
 node tests/check_template.js    # 前端离线校验：语法 + 模板编译 + 标识符 + 模板函数发布 + 6 种状态渲染冒烟
                                 #   + 移动端适配审计（断点 / 单栏切换 / 触控目标 / 溢出）
 node tests/check_browser.js     # 真浏览器冒烟（无头 Chrome，没装浏览器自动跳过）：控制台零报错 + DOM 真渲染
@@ -185,10 +191,10 @@ node --check static/app.js      # 单文件语法检查
   可用环境变量调整：`EVE_SKILL_PLAN_BASE`（默认 `http://127.0.0.1/skills`；设成 `http://127.0.0.1:8091`
   则直连后端，跳过 2 条 nginx 专有断言）、`EVE_SKILL_PLAN_PORT`（8091）、
   `EVE_SKILL_PLAN_CHAR`（测试角色，默认 2124544250；token 目录为空时相关断言自动跳过）。
-  断言总数随「token 目录里有没有角色」浮动：nginx 入口 60 / 58 项，直连后端 58 / 56 项。
+  断言总数随「token 目录里有没有角色」浮动：nginx 入口 85 / 83 项，直连后端 83 / 81 项。
 - `tests/smoke_frontend.js` 用 `node:vm` 加载 `util.js` + `app.js`（stub 掉 `Vue.createApp` / `localStorage` /
   `fetch` / DOM），直接驱动真实的 `data/computed/methods`，断言格式化函数、搜索、目标增删、复算、
-  保存/载入/导出、缓存与 `login()`；`BASE` 环境变量可指向任意后端。
+  保存/载入/导出、角色隔离（登录只显示当前角色 / 退出登录清会话）、缓存与 `login()`；`BASE` 环境变量可指向任意后端。
 - 数据依赖：断言里的计数（511 技能 / 40 职业 / 24 技能组 / 乌鸦级 6 项缺口 / 4天 13小时）绑定当前
   `data/skills.db` 与测试角色的技能表，换 SDE 或换角色后需同步更新。
 
@@ -289,7 +295,7 @@ GitHub 仓库 Secrets（Settings → Secrets and variables → Actions，与 eve
   两个应用共用一个目录会各自动手把对方的 refresh_token 轮换失效（症状：交替出现 `invalid_grant`）。
   本站默认 `~/.eve-skill-plan/tokens/<cid>.json`；若想和装配站共用一条授权，就让两站用**同一个** EVE 应用
   （门户里给同一应用登记两个回调地址），再把 `EVE_SKILL_PLAN_TOKEN_DIR` 指回同一个目录
-- 「退出登录」只删本站目录里该角色的 token，并尽力在 EVE 侧吊销 refresh token
+- 「退出登录」只清当前 SSO 会话（保留 token，重新登录无需再次授权）；切换角色 = 退出登录 → 重新 EVE SSO 登录
 
 
 ## 已验证行为 / 已知口径

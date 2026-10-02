@@ -5,12 +5,15 @@
 - 需求查询：/api/types、/api/type/<tid>
 - 职业路线：/api/careers、/api/career/<plan_id>
 - 计划：/api/plan（POST 复算）、/api/plan/txt（导出）、/api/plans（保存/读取/删除）
-- 角色：/api/characters（列表/退出）、/api/characters/<cid>/overview（技能+属性+队列）
+- 角色：/api/characters（仅当前登录角色）、/api/characters/<cid>/overview（技能+属性+队列，仅本人可读）、
+  DELETE /api/characters/<cid>（退出登录，仅清会话）
 - OAuth：/api/oauth/url → 浏览器跳转 EVE SSO → nginx 反代 /skills/oauth/callback
 
-SSO 隔离：OAuth 成功后签发会话 Cookie（esp_session），保存的技能训练计划
-按「创建它的登录角色」隔离 —— 未登录无法保存（POST /api/plans → 401），
-也只能读取/修改/删除自己创建的计划。
+SSO 隔离：OAuth 成功后签发会话 Cookie（esp_session）。
+- 保存的技能训练计划按「创建它的登录角色」隔离 —— 未登录无法保存（POST /api/plans → 401），
+  也只能读取/修改/删除自己创建的计划。
+- 技能读取同样隔离：只能读取当前登录角色的技能/属性/队列（未登录 401、非当前角色 403），
+  /api/characters 只返回当前登录角色 —— 前端没有「切换角色」入口，切换需退出登录后重新登录。
 
 nginx 里 /skills/ 前缀会被剥掉（proxy_pass 末尾带 /），因此本站路径都是裸的，
 前端一律用相对路径（static/…、api/…），换部署前缀不用改代码。
@@ -75,6 +78,22 @@ def _login_or_401():
     if not cid:
         return None, _fail("未登录无法保存技能训练计划（请先通过 EVE SSO 登录）", 401)
     return cid, None
+
+
+def _check_char_access(cid):
+    """校验 character_id 是否允许读取：必须等于当前 SSO 登录角色。
+
+    cid 为空（未指定角色）→ 公共视角（按从 0 级估算），放行；
+    未登录 → 401；非当前登录角色 → 403。返回 None 或 (json, status)。
+    """
+    if not cid:
+        return None
+    login_cid, _ = _login()
+    if not login_cid:
+        return _fail("未登录无法读取该角色的技能（请先通过 EVE SSO 登录）", 401)
+    if int(cid) != login_cid:
+        return _fail("只能读取当前登录角色的技能（如需切换请先退出登录再重新登录）", 403)
+    return None
 
 
 # ---------------------------------------------------------------- 通用
@@ -269,12 +288,19 @@ def _skill_refs(idx, need):
 
 @app.route("/api/skill/<int:tid>")
 def api_skill(tid):
-    """技能详情：描述 / 属性 / 逐级时间 / 前置 / 被谁需要（可选带角色当前等级）。"""
+    """技能详情：描述 / 属性 / 逐级时间 / 前置 / 被谁需要（可选带角色当前等级）。
+
+    character_id 只能传当前登录角色（SSO 隔离）：未登录 401、非当前角色 403。
+    """
+    cid = _int_arg("character_id")
+    if cid:
+        err = _check_char_access(cid)
+        if err:
+            return err
     idx = _index()
     skill = idx.skills.get(tid)
     if not skill:
         return _fail(f"没有这个技能：{tid}", 404)
-    cid = _int_arg("character_id")
     current, attrs = 0, dict(training.DEFAULT_ATTRS)
     if cid:
         try:
@@ -323,11 +349,18 @@ def api_types():
 
 @app.route("/api/type/<int:tid>")
 def api_type(tid):
-    """舰船/装备/弹药/无人机的需求技能（可选对照角色当前等级）。"""
+    """舰船/装备/弹药/无人机的需求技能（可选对照角色当前等级）。
+
+    character_id 只能传当前登录角色（SSO 隔离）：未登录 401、非当前角色 403。
+    """
+    cid = _int_arg("character_id")
+    if cid:
+        err = _check_char_access(cid)
+        if err:
+            return err
     idx = _index()
     if tid not in idx.types:
         return _fail(f"没有这个类型：{tid}", 404)
-    cid = _int_arg("character_id")
     current, attrs = {}, dict(training.DEFAULT_ATTRS)
     if cid:
         try:
@@ -392,8 +425,14 @@ def api_career(plan_id):
 # ---------------------------------------------------------------- 计划
 @app.route("/api/plan", methods=["POST"])
 def api_plan():
-    """依据目标 + 当前技能 + 属性复算技能计划。"""
+    """依据目标 + 当前技能 + 属性复算技能计划。
+
+    character_id 只能传当前登录角色（SSO 隔离）：未登录 401、非当前角色 403。
+    """
     data = _payload()
+    err = _check_char_access(data.get("character_id"))
+    if err:
+        return err
     targets = _normalize_targets(data.get("targets"))
     options = data.get("options") if isinstance(data.get("options"), dict) else {}
     current, cid = _current_skills(data)
@@ -415,6 +454,9 @@ def api_plan():
 def api_plan_txt():
     """计划导出为 EVE 技能计划文本（eve-skill.com 兼容格式，可粘贴导入）。"""
     data = _payload()
+    err = _check_char_access(data.get("character_id"))
+    if err:
+        return err
     targets = _normalize_targets(data.get("targets"))
     if not targets:
         return _fail("请先添加至少一个目标")
@@ -473,20 +515,27 @@ def api_plan_item(plan_id):
 
 @app.route("/api/plans/<int:plan_id>/run", methods=["POST"])
 def api_plan_run(plan_id):
-    """载入已保存计划并用其快照（或指定角色）重新计算（仅本人创建的计划）。"""
+    """载入已保存计划并用其快照（或指定角色）重新计算（仅本人创建的计划）。
+
+    refresh 或快照缺失时要按 character_id 拉 ESI —— 该角色必须是当前登录角色（SSO 隔离）。
+    """
     cid, _ = _login()
     saved = store.get_plan(plan_id, owner_cid=cid) if cid else None
     if not saved:
         return _fail(f"没有这个计划：{plan_id}", 404)
     data = _payload()
     refresh = bool(data.get("refresh"))          # refresh=True → 重新拉 ESI 技能
+    req_cid = data.get("character_id") or saved.get("character_id")
     current = {} if refresh else dict(saved["skills"] or {})
-    if refresh or not current:
-        current, _cid = _current_skills({"character_id": data.get("character_id")
-                                        or saved.get("character_id")})
     attrs = dict(saved["attrs"] or {})
+    if (refresh or not current) or (refresh or not attrs):   # 需要拉 ESI → 校验角色
+        err = _check_char_access(req_cid)
+        if err:
+            return err
+    if refresh or not current:
+        current, _cid = _current_skills({"character_id": req_cid})
     if refresh or not attrs:
-        attrs = _attrs({"character_id": data.get("character_id") or saved.get("character_id")})
+        attrs = _attrs({"character_id": req_cid})
     plan = planner.build_plan(_index(), saved["targets"], current=current, attrs=attrs,
                               options=saved["options"] or {})
     plan["plan_id"] = plan_id
@@ -500,31 +549,51 @@ def api_plan_run(plan_id):
 # ---------------------------------------------------------------- 角色 / SSO
 @app.route("/api/characters")
 def api_characters():
-    """已授权角色（含共享 token 目录里其他站点授权过的角色）+ 当前 SSO 登录身份。"""
-    try:
-        chars = esi.list_characters()
-    except Exception as exc:
-        log.warning("读取角色列表失败：%s", exc)
-        chars = []
+    """当前登录角色（未登录 → 空列表）。
+
+    SSO 隔离：只暴露当前登录角色，不列出 token 目录里的其他已授权角色 ——
+    前端因此没有「切换角色」入口；切换角色需先退出登录再重新登录。
+    """
     login_cid, login_name = _login()
+    chars = []
+    if login_cid:
+        try:
+            chars = [c for c in esi.list_characters() if c["id"] == login_cid]
+        except Exception as exc:
+            log.warning("读取角色列表失败：%s", exc)
+        if not chars:
+            chars = [{"id": login_cid, "name": login_name or str(login_cid),
+                      "scopes": [], "can_read_skills": False}]
     return jsonify({
         "characters": chars,
-        "token_dir": config.TOKEN_DIR,
         "login": {"cid": login_cid, "name": login_name} if login_cid else None,
     })
 
 
 @app.route("/api/characters/<int:cid>", methods=["DELETE"])
-def api_character_forget(cid):
-    cur, _ = _login()
-    if cur == cid:                           # 退出的是当前登录角色 → 一并清掉会话
-        session.clear()
-    return jsonify(esi.forget(cid))
+def api_character_logout(cid):
+    """退出登录：清掉 SSO 会话（保留 token，重新登录无需再次授权）。
+
+    只能退出「当前登录角色」；切换角色 = 先退出登录 → 再重新 EVE SSO 登录。
+    """
+    login_cid, login_name = _login()
+    if not login_cid:
+        return _fail("未登录", 401)
+    if login_cid != cid:
+        return _fail("只能退出当前登录角色（切换角色请先退出登录再重新登录）", 403)
+    session.clear()
+    return jsonify({"logged_out": True, "id": cid, "name": login_name})
 
 
 @app.route("/api/characters/<int:cid>/overview")
 def api_character_overview(cid):
-    """角色概览：技能等级 / 有效属性 / 训练队列 / 技能点。"""
+    """角色概览：技能等级 / 有效属性 / 训练队列 / 技能点。
+
+    SSO 隔离：只能读取当前登录角色 —— 未登录 401，非当前登录角色 403。
+    """
+    err = _check_char_access(cid)
+    if err:
+        return err
     out = {"id": cid, "name": str(cid)}
     for ch in esi.list_characters():
         if ch["id"] == cid:

@@ -152,7 +152,8 @@ st, d = call("GET", "/api/skill/3300")
 ok(d["skill"]["name"] == "射击学" and d["level_seconds"]["5"] > 0 and len(d["consumers"]) >= 1,
    "api/skill/3300 详情 + 逐级时间 + 被需求")
 st, d = call("GET", f"/api/skill/3300?character_id={CHAR_ID}")
-ok(st == 200 and "current" in d, "api/skill 带角色当前等级", d.get("current"))
+ok(st == 401 and "登录" in d.get("error", ""),
+   "匿名带 character_id 的技能详情 → 401（只能读当前登录角色）", st)
 st, d = call("GET", "/api/skill/999999")
 ok(st == 404 and bool(d.get("error")), "api/skill 不存在 → 404", st)
 
@@ -206,8 +207,8 @@ st, p3 = call("POST", "/api/plan", {"targets": targets, "current": {}, "attrs": 
 secs = [r["seconds"] for r in p3["rows"]]
 ok(secs == sorted(secs), "order=shortest 生效", secs)
 st, p4 = call("POST", "/api/plan", {"targets": targets, "character_id": CHAR_ID})
-ok(st == 200 and p4["character_id"] == CHAR_ID and p4["summary"]["skills_missing"] <= 6,
-   "带 character_id → 走 ESI 技能表", p4["summary"]["skills_missing"])
+ok(st == 401 and "登录" in p4.get("error", ""),
+   "匿名带 character_id 的计划复算 → 401（SSO 隔离）", st)
 st, p5 = call("POST", "/api/plan", {"targets": [{"kind": "career", "tid": 21, "plan_id": 21}]})
 ok(st == 200 and p5["summary"]["skills_total"] > 20, "职业路线目标", p5["summary"]["skills_total"])
 st, p6 = call("POST", "/api/plan", {"targets": [{"kind": "skill", "tid": 3300, "level": 4}]})
@@ -295,27 +296,77 @@ ok(r.status_code == 404, "删除后再查 → 404", r.status_code)
 with client.session_transaction() as s:
     s.clear()
 
-# 真实服务端（无 Cookie 的匿名视角）：api/characters 不报已登录；不存在的计划 404
-st, d = call("GET", "/api/characters")
-ok(st == 200 and d.get("login") is None, "api/characters 匿名访问 login 字段为 null", d.get("login"))
+# 技能读取隔离：登录后只能读当前角色的技能 / 属性 / 队列，不能切换角色
+with client.session_transaction() as s:
+    s["cid"], s["name"] = 1111, "冒烟角色甲"
+r = client.get("/api/characters")
+jd = r.get_json()
+ok(r.status_code == 200 and [c["id"] for c in jd["characters"]] == [1111]
+   and jd["login"]["cid"] == 1111 and jd["login"]["name"] == "冒烟角色甲",
+   "登录后 /api/characters 只列出当前登录角色（无切换入口）", jd)
+r = client.get("/api/characters/1111/overview")
+ok(r.status_code == 200 and ("skills" in r.get_json() or "skills_error" in r.get_json()),
+   "登录后可读自己的 overview（无 token 时带 skills_error）", r.status_code)
+r = client.get("/api/characters/2222/overview")
+ok(r.status_code == 403 and "当前登录角色" in r.get_json().get("error", ""),
+   "读其他角色 overview → 403（不可切换）", r.status_code)
+r = client.get("/api/skill/3300?character_id=2222")
+ok(r.status_code == 403, "带他人 character_id 的技能详情 → 403", r.status_code)
+r = client.get("/api/type/638?character_id=2222")
+ok(r.status_code == 403, "带他人 character_id 的类型需求 → 403", r.status_code)
+r = client.post("/api/plan", json={"targets": targets, "character_id": 2222})
+ok(r.status_code == 403, "带他人 character_id 的计划复算 → 403", r.status_code)
+r = client.delete("/api/characters/2222")
+ok(r.status_code == 403, "不能退出非当前登录角色 → 403", r.status_code)
+r = client.delete("/api/characters/1111")
+jd = r.get_json()
+ok(r.status_code == 200 and jd.get("logged_out") is True, "退出登录（仅清会话，保留 token）", jd)
+r = client.get("/api/characters")
+jd = r.get_json()
+ok(r.status_code == 200 and jd["characters"] == [] and jd["login"] is None,
+   "退出后 /api/characters 恢复空列表", jd)
+r = client.get("/api/characters/1111/overview")
+ok(r.status_code == 401, "退出后再读 overview → 401", r.status_code)
+with client.session_transaction() as s:
+    s.clear()
+
+# 登录态读真实角色技能（token 目录有测试角色时才断言）
+if os.path.exists(os.path.join(_cfg.TOKEN_DIR, f"{CHAR_ID}.json")):
+    with client.session_transaction() as s:
+        s["cid"], s["name"] = CHAR_ID, "真实角色"
+    r = client.get(f"/api/characters/{CHAR_ID}/overview")
+    jd = r.get_json()
+    ok(r.status_code == 200 and jd.get("name") and len(jd.get("skills", {})) > 100
+       and jd.get("total_sp", 0) > 1e6,
+       "登录后可读真实角色的技能 / SP / 属性 / 队列",
+       [jd.get("name"), len(jd.get("skills", {})), jd.get("total_sp")])
+    r = client.post("/api/plan", json={"targets": targets, "character_id": CHAR_ID})
+    jd = r.get_json()
+    ok(r.status_code == 200 and jd.get("character_id") == CHAR_ID,
+       "登录后带自己 character_id 的计划复算走 ESI", jd.get("summary"))
+    with client.session_transaction() as s:
+        s.clear()
+else:
+    print("  (token 目录无测试角色，跳过真实角色 overview / ESI 断言 —— 未走 SSO 时属正常)")
+
+# 真实服务端（无 Cookie 的匿名视角）：不存在的计划 404；角色接口按 SSO 隔离拒绝
 st, d = call("GET", "/api/plans/999999")
 ok(st == 404, "GET 不存在计划 → 404", st)
 st, d = call("POST", "/api/plans/999999/run", {})
 ok(st == 404, "run 不存在计划 → 404", st)
 
-print("== 角色 / SSO")
+print("== 角色 / SSO（只能读当前登录角色，不可切换）")
 st, d = call("GET", "/api/characters")
-ok(st == 200 and isinstance(d["characters"], list) and bool(d.get("token_dir")), "api/characters 列表",
-   [c["name"] for c in d["characters"]])
-if d["characters"]:
-    st, d = call("GET", f"/api/characters/{CHAR_ID}/overview")
-    ok(d["name"] and len(d["skills"]) > 100 and d["total_sp"] > 1e6,
-       "overview 技能 / SP / 属性 / 队列", [d.get("name"), len(d.get("skills", {})), d.get("total_sp")])
-    ok(d["attributes"]["perception"] > 0 and isinstance(d["queue"], list), "overview 属性 + 队列")
-else:
-    print("  (token 目录暂无角色，跳过 overview 断言 —— 未走 SSO 时属正常)")
+ok(st == 200 and d.get("characters") == [] and d.get("login") is None,
+   "匿名 /api/characters → 空列表（不泄露 token 目录角色）", d.get("characters"))
+st, d = call("GET", f"/api/characters/{CHAR_ID}/overview")
+ok(st == 401 and "登录" in d.get("error", ""), "匿名 overview → 401（未登录不能读任何角色技能）", st)
 st, d = call("GET", "/api/characters/1/overview")
-ok(st == 200 and ("skills" in d or "skills_error" in d), "overview 对未授权角色优雅降级（200 + 说明）", st)
+ok(st == 401, "匿名 overview(其他 cid) → 401", st)
+st, d = call("GET", "/api/type/638?character_id=1")
+ok(st == 401, "匿名带 character_id 的类型需求 → 401", st)
+st, d = call("POST", "/api/plan", {"targets": targets, "character_id": 1})
+ok(st == 401, "匿名带 character_id 的计划复算 → 401", st)
 st, d = call("GET", "/api/oauth/url")
 ok(st == 200 and d["url"].startswith("https://login.eveonline.com/v2/oauth/authorize")
    and "code_challenge_method=S256" in d["url"] and "redirect_uri=" in d["url"] and d.get("state"),

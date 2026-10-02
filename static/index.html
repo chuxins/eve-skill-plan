@@ -140,7 +140,8 @@ tr.done td{color:var(--m)}
     <span class="small" :class="cid?'g':'m'">角色：{{charName}}</span>
     <span class="small" :class="loggedIn?'g':'y'" :title="loggedIn?('SSO 登录：'+loginName):'未登录，无法保存技能训练计划'">SSO：{{loggedIn?'已登录':'未登录'}}</span>
     <button class="sm" v-if="targets.length" @click="recalc()">复算计划</button>
-    <button class="sm prim" @click="login()">登录 EVE 角色</button>
+    <button class="sm prim" v-if="!loggedIn" @click="login()">登录 EVE 角色</button>
+    <button class="sm" v-else @click="logout()">退出登录</button>
   </header>
 
   <main :class="'mp-'+mpane">
@@ -477,28 +478,24 @@ tr.done td{color:var(--m)}
         <h3 class="sec">角色与属性</h3>
 
         <div class="card">
-          <div class="row wrap">
-            <select v-model.number="cid" @change="pickChar(cid)" style="flex:1;min-width:120px">
-              <option :value="null">— 未选择角色（按从 0 级估算）—</option>
-              <option v-for="c in chars" :key="c.id" :value="c.id">{{c.name}}</option>
-            </select>
-            <button class="sm prim" @click="login()">授权新角色</button>
+          <div class="row wrap" v-if="loginCid">
+            <span class="chip on">{{loginName || charName}}</span>
+            <span class="small m" style="margin-left:auto">仅当前登录角色 · 切换需先退出登录</span>
           </div>
-          <div class="row small m" v-if="!chars.length" style="margin-top:4px">
-            还没有已授权角色。点「授权新角色」走 EVE SSO（需要 esi-skills.read_skills.v1）。
+          <div class="row wrap" v-else>
+            <button class="sm prim" style="flex:1" @click="login()">登录 EVE 角色</button>
+          </div>
+          <div class="row small m" v-if="!loginCid" style="margin-top:4px">
+            未登录：只能读取当前登录角色的技能列表；切换角色请先「退出登录」再重新登录。
           </div>
           <div class="kv" v-if="totalSp != null"><span class="k">总技能点</span><span>{{n(totalSp)}}</span></div>
           <div class="kv" v-if="cid"><span class="k">已学技能</span><span>{{Object.keys(current).length}} 项</span></div>
           <div class="kv" v-if="cid"><span class="k">角色 ID</span><span>{{cid}}</span></div>
           <div class="kv" v-if="loggedIn"><span class="k">SSO 登录</span><span class="g">{{loginName}}</span></div>
           <div class="kv" v-else><span class="k">SSO 登录</span><span class="y">未登录</span></div>
-          <div class="row wrap" style="margin-top:6px" v-if="chars.length">
-            <span class="chip" v-for="c in chars" :key="c.id" :class="{on:cid===c.id}"
-                  @click="pickChar(c.id)">{{c.name}}</span>
-          </div>
           <div class="row wrap" style="margin-top:5px" v-if="cid">
             <button class="sm" @click="pickChar(cid)">重读技能</button>
-            <button class="sm" @click="forgetChar(chars.find(c=>c.id===cid)||{id:cid,name:charName})">退出该角色</button>
+            <button class="sm" @click="logout()">退出登录</button>
           </div>
         </div>
 
