@@ -1,0 +1,10 @@
+[Unit]
+Description=EVE skill plan auto-update (git pull + pip + restart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 需 root：脚本内 git/pip 借 APP_USER（默认 root）执行，保持文件属主一致；
+# 用 /bin/bash 显式调用，避免因检出/权限位丢失导致无法执行。
+ExecStart=/bin/bash /root/eve-skill-plan/deploy/auto-update.sh

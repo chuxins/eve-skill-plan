@@ -308,7 +308,7 @@ Object.assign(inst, {
   cid: 12345, cname: '测试角色',
   current: { 3300: 3, 3301: 4 },
   totalSp: 12345678,
-  queue: [{ queue_position: 0, skill_id: 3300, finished_level: 4, finish_date: '2026-09-29T10:00:00Z' }],
+  queue: [{ queue_position: 0, skill_id: 3300, skill_name: '加达里战列舰', skill_name_en: 'Caldari Battleship', finished_level: 4, finish_date: '2026-09-29T10:00:00Z' }],
   groups: [{ id: 1, name: '舰船指挥', skills: [3300, 3301] }],
   skills: [{ tid: 3300, name: '加达里战列舰', rank: 8 }],
   careers: [{ plan_id: 'caldari_wealth', name: '加达里财富猎手', name_en: 'Caldari Wealth Hunter', skills: 2 }],
@@ -317,7 +317,7 @@ Object.assign(inst, {
 });
 renderState('boot 之后（角色 + 属性 + 队列）',
   ['技能 520 · 类型 30000 · 职业路线 40', '测试角色', '总技能点', '12.3M', '已学技能',
-   '魅力', '智力', '记忆', '感知', '毅力', '当前训练队列（1）', '到 Ⅳ 级', TIME,
+   '魅力', '智力', '记忆', '感知', '毅力', '当前训练队列（1）', '加达里战列舰', '到 Ⅳ 级', TIME,
    '最近保存', '乌鸦级计划']);
 
 /* 技能库页签 + 技能详情 */
@@ -491,7 +491,7 @@ mok(navBtnH >= 44, '底部导航按钮 ≥44px', navBtnH);
 mok(minH('.tabs button') >= 44, '页签按钮 ≥44px', minH('.tabs button'));
 const inpFs = parseFloat((cssDecl('input', 'font-size', MOB) || {}).value) || 0;
 mok(inpFs >= 16, '手机端输入框字号 ≥16px（iOS 聚焦不放大页面）', inpFs);
-mok(/input,select,textarea\{font-size:16px\}/.test(html), '输入框字号写成表单控件统一规则');
+mok(/input,select,textarea\{font-size:18px\}/.test(html), '输入框字号写成表单控件统一规则');
 
 /* 宽表格 / 浮层 */
 const twCount = (tpl.match(/<div class="tw"><table>/g) || []).length;

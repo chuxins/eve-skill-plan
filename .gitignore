@@ -2,3 +2,8 @@ data/
 __pycache__/
 *.pyc
 config.json
+# 部署：服务器只读 Deploy Key（不入库）
+.deploy_key
+.deploy_key.pub
+.ssh/
+

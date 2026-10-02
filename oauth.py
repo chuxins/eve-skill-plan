@@ -8,6 +8,7 @@ import base64
 import hashlib
 import json
 import secrets
+import time
 from urllib.parse import urlencode
 
 import requests
@@ -101,5 +102,8 @@ def exchange_code(code, verifier):
     if not cid:
         raise RuntimeError("无法从 token 解析角色 ID（SSO 返回异常）")
     scopes = sorted(scp(token["access_token"]))
+    # 补绝对过期时间（epoch 秒）：EVE 只给相对秒数 expires_in，
+    # 缺这个字段时 esi.get_token 无法判断过期，会一直拿旧 token 打到 ESI 401。
+    token["expires"] = time.time() + int(token.get("expires_in") or 1200)
     token.update({"id": cid, "name": name or str(cid), "scopes": scopes})
     return {"id": cid, "name": name or str(cid), "scopes": scopes, "token": token}

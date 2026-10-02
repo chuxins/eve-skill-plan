@@ -1,7 +1,7 @@
 # eve-skill-plan（EVE 技能规划站）
 
 Flask + Vue 单页技能规划站：**技能库 / 需求查询 / 职业路线 / 计划** 四个主标签 + 常驻「角色与属性」面板，
-按角色已有技能与有效属性算「还缺哪些技能、各缺几级、预计训练多久」，可保存计划、导出 Excel 友好的 TSV。
+按角色已有技能与有效属性算「还缺哪些技能、各缺几级、预计训练多久」，可保存计划、导出 EVE 技能计划 TXT。
 页面挂在 nginx 的 `/skills/` 子路径下：**http://8.138.203.48/skills/**
 
 ## 运行
@@ -40,7 +40,7 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
   - 角色已有等级（0–5）与**有效属性**（base + 植入体）决定训练时长与缺口
   - 排序：`前置优先`（拓扑序，可自上而下依次训练）/ `耗时最短`
   - `include_owned` 可把已满足的技能一并列出；已满足/待训练分区显示
-  - **导出 TSV**：UTF-8 BOM + 中英文技能名 + 汇总行（Excel / 表格工具直接打开不乱码）
+  - **导出 TXT**：EVE 技能计划文本（`<localized hint="英文名">中文名*</localized> 等级`，每行一项，可粘贴导入游戏 / 第三方规划工具）
   - **保存计划**：命名保存到 `data/app.db`，列表里可载入（用保存时的目标与快照复算）或 `refresh` 用当前角色重算，可删除
 - **角色与属性**：页头「登录」走 EVE SSO；已授权角色直接可选，
   显示角色名、技能点、有效属性（可手改/用预设）、**当前训练队列**（剩余时间/完成时间）、「退出登录」注销该角色
@@ -74,7 +74,7 @@ GET    /api/type/<tid>?character_id=      该类型的递归需求技能（含�
 GET    /api/careers                       职业路线列表
 GET    /api/career/<plan_id>              职业路线详情（里程碑 + 技能需求）
 POST   /api/plan                          复算计划 {targets,current,attrs,character_id,options}
-POST   /api/plan/tsv                      导出 TSV（同一入参，返回 text/tab-separated-values）
+POST   /api/plan/txt                      导出 TXT（同一入参，返回 text/plain 技能计划文本）
 GET    /api/plans                         已保存计划列表
 POST   /api/plans                         保存计划 {name,targets,current,attrs,character_id}
 GET    /api/plans/<id>                    计划详情
@@ -177,7 +177,7 @@ node --check static/app.js      # 单文件语法检查
 
 - `tests/smoke_http.py` 覆盖：静态入口（`/skills` → 301、首页占位符注入、资源版本号）、元信息/技能搜索（含
   裸 UTF-8 与 latin-1 乱码容错）、技能与类型/职业详情、计划复算（从零 / 带 `current` / `include_owned` /
-  排序 / 带 `character_id` / 职业 / 单技能 / 空目标 400 / 非法 tid 400）、TSV（BOM/表头/汇总/中英文名）、
+  排序 / 带 `character_id` / 职业 / 单技能 / 空目标 400 / 非法 tid 400）、TXT（localized 格式 / 逐行等级 / 中英文名）、
   计划 CRUD + `run`、角色 overview 与 OAuth（授权地址含 PKCE + scope、回调缺参 400）。
   可用环境变量调整：`EVE_SKILL_PLAN_BASE`（默认 `http://127.0.0.1/skills`；设成 `http://127.0.0.1:8091`
   则直连后端，跳过 2 条 nginx 专有断言）、`EVE_SKILL_PLAN_PORT`（8091）、
@@ -211,6 +211,49 @@ location /skills/ {
 `OOMScoreAdjust=-500`（内存紧张时优先牺牲 VS Code 远端进程），日志 append 到 `data/webapp.log`。
 
 改完配置：`nginx -t && systemctl reload nginx`；改完代码/静态资源：`systemctl restart eve-skill-plan`。
+
+### 自动部署（Windows 开发机 → git push → 服务器自动拉取）
+
+仓库已配好「push 即部署」：本地 `git push origin main` 后，GitHub Actions 经 SSH 登录服务器执行
+`deploy/auto-update.sh`（`git fetch` → 有变化才 `git reset --hard origin/main` → `requirements.txt`
+变化才装依赖 → `systemctl restart eve-skill-plan`）；服务器上的 `eve-skill-plan-update.timer`
+每 2 分钟轮询一次作兜底。数据与凭据安全：`data/`（skills.db / app.db / 日志）与 `config.json`
+被 `.gitignore` 忽略，`reset --hard` 不触碰，已保存计划、技能索引与 OAuth 凭据不受影响。
+
+服务器一次性安装（只做一次）：
+
+```bash
+# 1) 生成只读 Deploy Key（属主与服务用户一致，默认 root），把 .pub 内容加到
+#    GitHub 仓库 Settings → Deploy keys（勾选 read-only，只允许拉取）
+mkdir -p /root/eve-skill-plan/.ssh
+ssh-keygen -t ed25519 -f /root/eve-skill-plan/.deploy_key -N '' -C 'eve-skill-plan auto-update (read-only)'
+cat /root/eve-skill-plan/.deploy_key.pub
+
+# 2) 远端改为 SSH（只拉取，不在服务器上 push；push 一律在 Windows 开发机进行）
+git -C /root/eve-skill-plan remote set-url origin git@github.com:chuxins/eve-skill-plan.git
+
+# 3) 安装定时器（兜底轮询）
+cp /root/eve-skill-plan/deploy/eve-skill-plan-update.service \
+   /root/eve-skill-plan/deploy/eve-skill-plan-update.timer /etc/systemd/system/
+chmod +x /root/eve-skill-plan/deploy/auto-update.sh
+systemctl daemon-reload
+systemctl enable --now eve-skill-plan-update.timer
+
+# 4) 手动验证一次（无更新应显示“已是最新”且不重启）
+/root/eve-skill-plan/deploy/auto-update.sh
+```
+
+GitHub 仓库 Secrets（Settings → Secrets and variables → Actions，与 eve-isk 同款）：
+
+| Secret    | 值 |
+|-----------|----|
+| `SSH_HOST` | 服务器公网 IP `8.138.203.48` |
+| `SSH_USER` | `root`（需能执行 sudo） |
+| `SSH_KEY`  | 用于 SSH 登录服务器的私钥（公钥已加入服务器 `authorized_keys`） |
+
+常用命令：手动触发 `/root/eve-skill-plan/deploy/auto-update.sh`；查看定时器
+`systemctl list-timers eve-skill-plan-update.timer`；更新日志 `journalctl -u eve-skill-plan-update -n 50`；
+暂停止自动更新 `systemctl disable --now eve-skill-plan-update.timer`。
 
 ## OAuth 接线
 

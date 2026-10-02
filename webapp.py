@@ -4,7 +4,7 @@
 - 技能库：/api/skillgroups、/api/skills、/api/skill/<tid>
 - 需求查询：/api/types、/api/type/<tid>
 - 职业路线：/api/careers、/api/career/<plan_id>
-- 计划：/api/plan（POST 复算）、/api/plan/tsv（导出）、/api/plans（保存/读取/删除）
+- 计划：/api/plan（POST 复算）、/api/plan/txt（导出）、/api/plans（保存/读取/删除）
 - 角色：/api/characters（列表/退出）、/api/characters/<cid>/overview（技能+属性+队列）
 - OAuth：/api/oauth/url → 浏览器跳转 EVE SSO → nginx 反代 /skills/oauth/callback
 
@@ -375,9 +375,9 @@ def api_plan():
     return jsonify(plan)
 
 
-@app.route("/api/plan/tsv", methods=["POST"])
-def api_plan_tsv():
-    """计划导出为制表符文本（文件名带角色/目标，方便归档）。"""
+@app.route("/api/plan/txt", methods=["POST"])
+def api_plan_txt():
+    """计划导出为 EVE 技能计划文本（eve-skill.com 兼容格式，可粘贴导入）。"""
     data = _payload()
     targets = _normalize_targets(data.get("targets"))
     if not targets:
@@ -385,9 +385,9 @@ def api_plan_tsv():
     current, _cid = _current_skills(data)
     plan = planner.build_plan(_index(), targets, current=current, attrs=_attrs(data),
                               options=data.get("options") or {})
-    body = planner.plan_tsv(_index(), plan)
-    resp = app.response_class("\ufeff" + body, mimetype="text/tab-separated-values")
-    resp.headers["Content-Disposition"] = "attachment; filename=skill-plan.tsv"
+    body = planner.plan_txt(_index(), plan)
+    resp = app.response_class(body, mimetype="text/plain; charset=utf-8")
+    resp.headers["Content-Disposition"] = "attachment; filename=skill-plan.txt"
     return resp
 
 
@@ -481,7 +481,14 @@ def api_character_overview(cid):
     except Exception as exc:
         out["attributes_error"] = str(exc)
     try:
-        out["queue"] = esi.get_skillqueue(cid)
+        idx = get_index().skills
+        out["queue"] = []
+        for q in esi.get_skillqueue(cid) or []:
+            item = dict(q)
+            sk = idx.get(int(q.get("skill_id") or 0))
+            item["skill_name"] = sk["name"] if sk else f"#{q.get('skill_id')}"
+            item["skill_name_en"] = sk["name_en"] if sk else ""
+            out["queue"].append(item)
     except Exception as exc:
         out["queue"] = None
         out["queue_error"] = str(exc)
@@ -512,8 +519,12 @@ def oauth_start():
 
 
 @app.route("/oauth/callback")
+@app.route("/callback")
 def oauth_callback():
-    """EVE SSO 回调：换 token → 写入共享 token 目录 → 回前端。"""
+    """EVE SSO 回调：换 token → 写入共享 token 目录 → 回前端。
+
+    /oauth/callback 与 /callback 均可（后者供本地测试登记 http://localhost:8001/callback）。
+    """
     code = request.args.get("code")
     state = request.args.get("state") or ""
     pending = _states.pop(state, None)

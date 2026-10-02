@@ -12,6 +12,8 @@ const app = createApp({
       /* 移动端适配：≤900px 时一次只显示一栏（见 index.html 的 @media (max-width:900px)） */
       mpane: 'l',            // 当前栏：l 列表 / c 详情 / r 角色与属性（桌面端三栏同时显示，此值不起作用）
       isMobile: false,       // 由 syncMobile() 跟随视口宽度更新，决定「点列表项是否自动跳详情」
+      /* 左右栏宽度（px）：由 .gutter 拖拽手柄调整，存 localStorage，刷新后保留 */
+      lw: 330, rw: 372,
       meta: null, busy: '', err: '', toast: '',
       // 角色 / 属性
       chars: [], cid: null, cname: '', current: {}, attrs: {}, queue: null, totalSp: null,
@@ -64,6 +66,49 @@ const app = createApp({
       this.isMobile = !!(window.matchMedia && window.matchMedia('(max-width:900px)').matches);
     },
     showDetail() { if (this.isMobile) this.mpane = 'c'; },
+    // ---------------------------------------------------------- 栏宽拖拽（桌面端三栏）
+    /* 恢复上次拖拽的栏宽，并写到 <main> 的 CSS 变量上（grid-template-columns 读取它们） */
+    loadCols() {
+      try {
+        const c = JSON.parse(localStorage.getItem('esp_cols') || 'null');
+        if (c && typeof c.l === 'number' && c.l >= 140) this.lw = Math.round(c.l);
+        if (c && typeof c.r === 'number' && c.r >= 140) this.rw = Math.round(c.r);
+      } catch (e) { /* 坏数据直接忽略，用默认宽度 */ }
+      this.applyCols();
+    },
+    applyCols() {
+      /* 注意：本组件是多根 fragment（#app 里 header/main/nav 平级），this.$el 指向第一个根
+       * <header>，用 $el.querySelector('main') 会拿到 null。页面只有一个 <main>，直接全局查。 */
+      const m = document.querySelector('main');
+      if (!m) return;
+      m.style.setProperty('--lw', this.lw + 'px');
+      m.style.setProperty('--rw', this.rw + 'px');
+    },
+    /* 拖动左右栏边界：mousemove 期间实时改 CSS 变量，松开后持久化 */
+    startDrag(side, ev) {
+      if (this.isMobile) return;                 // 手机单栏布局不拖
+      ev.preventDefault();
+      const g = ev.currentTarget;
+      if (g) g.classList.add('dragging');        // 拖动期间保持高亮（鼠标移出手柄也不消失）
+      const startX = ev.clientX;
+      const startW = side === 'l' ? this.lw : this.rw;
+      const onMove = (e) => {
+        const delta = e.clientX - startX;
+        const w = Math.max(140, Math.min(800, Math.round(startW + (side === 'l' ? delta : -delta))));
+        if (side === 'l') this.lw = w; else this.rw = w;
+        this.applyCols();
+      };
+      const onUp = () => {
+        if (g) g.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.style.userSelect = '';
+        try { localStorage.setItem('esp_cols', JSON.stringify({ l: this.lw, r: this.rw })); } catch (e) {}
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+      document.body.style.userSelect = 'none';   // 拖拽时防止选中文本
+    },
     // ---------------------------------------------------------- 角色
     async loadChars(select) {
       try {
@@ -201,16 +246,17 @@ const app = createApp({
           this.planName = `${this.charName} · ${this.targets.map(t => t.name).join('+').slice(0, 40)}`;
       } catch (e) { this.err = e.message; } finally { this.busy = ''; }
     },
-    async exportTsv() {
+    async exportTxt() {
       if (!this.plan) return;
       try {
-        const r = await fetch('api/plan/tsv', { method: 'POST',
+        const r = await fetch('api/plan/txt', { method: 'POST',
           headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(this.query()) });
         if (!r.ok) throw new Error('导出失败：' + r.status);
         const url = URL.createObjectURL(await r.blob());
         const a = document.createElement('a');
         a.href = url;
-        a.download = `技能计划-${this.charName}.tsv`;
+        a.download = (this.planName || `技能计划-${this.charName}`)
+          .replace(/[\\/:*?"<>|]/g, '-') + '.txt';
         a.click(); URL.revokeObjectURL(url);
       } catch (e) { this.err = e.message; }
     },
@@ -247,6 +293,7 @@ const app = createApp({
   },
   mounted() {
     this.syncMobile();
+    this.loadCols();                             // 恢复拖拽后的左右栏宽度
     /* 旋转屏幕 / 拖窗口都会触发；比 matchMedia 的 change 事件更兼容旧浏览器 */
     window.addEventListener('resize', this.syncMobile);
     this.boot();

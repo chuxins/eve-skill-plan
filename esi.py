@@ -20,15 +20,32 @@ _cache = {}          # cid -> (token_dict, load_ts)
 TOKEN_TTL = 1200     # 秒（< access_token 20 分钟有效期）
 
 
-def _granted_scopes(access_token):
-    """从 access_token（JWT）解析 EVE 实际授予的 scope。"""
+def _jwt_claims(access_token):
+    """解析 access_token（JWT）的 payload claims；解析失败返回 {}。"""
     try:
         payload = str(access_token).split(".")[1]
         payload += "=" * (-len(payload) % 4)
-        claims = json.loads(base64.urlsafe_b64decode(payload))
-        return set(claims.get("scp") or [])
+        return json.loads(base64.urlsafe_b64decode(payload)) or {}
     except Exception:
-        return set()
+        return {}
+
+
+def _granted_scopes(access_token):
+    """从 access_token（JWT）解析 EVE 实际授予的 scope。"""
+    return set(_jwt_claims(access_token).get("scp") or [])
+
+
+def _jwt_exp(access_token):
+    """从 access_token（JWT）解析过期时间（epoch 秒）；解析失败返回 None。
+
+    早期 token 文件只存了 EVE 返回的相对秒数 expires_in、没有绝对时间戳 expires，
+    此时用 JWT 自带的 exp claim 判断过期，避免 401 才暴露。
+    """
+    exp = _jwt_claims(access_token).get("exp")
+    try:
+        return float(exp) if exp else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _token_path(cid):
@@ -108,8 +125,10 @@ def get_token(cid):
         if not token:
             raise RuntimeError(f"角色 {cid} 没有授权记录（请重新走 SSO）")
         _cache[cid] = (dict(token), now)
-    expires = token.get("expires")
-    if expires and float(expires) - now < 120:
+    # 绝对过期时间：优先 token 文件的 expires，缺失时回退到 JWT 的 exp claim，
+    # 两者都没有就视为过期（有 refresh_token 就刷新，无则抛错让用户重新授权）。
+    expires = token.get("expires") or _jwt_exp(token.get("access_token", ""))
+    if not expires or float(expires) - now < 120:
         token = _refresh(cid, token)
         with _lock:
             _cache[cid] = (dict(token), now)
@@ -163,13 +182,35 @@ def _headers(cid):
             "User-Agent": "eve-skill-plan/1.0 (your-contact@example.com)"}
 
 
+def _force_refresh(cid):
+    """无视本地过期判断，强制用 refresh_token 刷新（ESI 401 的兜底）。"""
+    cid = int(cid)
+    token = load_token(cid) or {}
+    if not token.get("refresh_token"):
+        raise RuntimeError(f"角色 {cid} 缺少 refresh_token，请重新走 SSO 授权")
+    refreshed = _refresh(cid, token)
+    with _lock:
+        _cache[cid] = (dict(refreshed), time.time())
+    return refreshed
+
+
 def esi_get(cid, path, params=None, retry=1):
-    """带角色授权的 GET（502 偶发故障重试一次）。"""
+    """带角色授权的 GET。
+
+    - 401：token 失效（本地过期判断未覆盖，如服务端吊销/换应用轮换），强制刷新后重试一次
+    - 502：ESI 偶发故障，稍等重试一次
+    """
     url = f"{config.ESI_BASE}{path}"
-    resp = requests.get(url, headers=_headers(cid), params=params, timeout=30)
+    headers = _headers(cid)
+    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    if resp.status_code == 401 and retry > 0:
+        _force_refresh(cid)
+        headers = _headers(cid)
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        retry -= 1
     if resp.status_code == 502 and retry > 0:
         time.sleep(1)
-        resp = requests.get(url, headers=_headers(cid), params=params, timeout=30)
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
     if resp.status_code == 403:
         raise RuntimeError("该角色未授予所需 scope（请重新授权并勾选技能读权限）")
     resp.raise_for_status()

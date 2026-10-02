@@ -13,48 +13,53 @@ html,body{height:100%;overflow:hidden}
 html{-webkit-text-size-adjust:100%}
 /* 移动端地址栏收缩时 100dvh 比 100% 更贴（桌面端两者等价） */
 @supports (height:100dvh){html,body{height:100dvh}}
-body{background:var(--bg);color:var(--t);font:15px/1.5 "Microsoft YaHei","PingFang SC",sans-serif}
+body{background:var(--bg);color:var(--t);font:17px/1.5 "Microsoft YaHei","PingFang SC",sans-serif}
 #app{display:flex;flex-direction:column;height:100%}
 input,select,textarea,button{font:inherit;background:#171a20;color:var(--t);border:1px solid var(--b);border-radius:5px;padding:5px 9px}
 button{cursor:pointer;background:var(--p2);min-width:44px;white-space:nowrap}
-button.sm{padding:3px 6px;font-size:12.5px}
+button.sm{padding:3px 6px;font-size:14.5px}
 button:hover{border-color:var(--a)} button.prim{background:#2b4a7a;border-color:#3a5f9e}
 button.on{border-color:var(--a);color:#fff;background:#243651}
 input:focus,textarea:focus,select:focus{outline:none;border-color:var(--a)}
 a{color:var(--a);cursor:pointer}
 .m{color:var(--m)}.r{color:var(--r)}.g{color:var(--g)}.y{color:var(--y)}.b{color:var(--a)}
-.bold{font-weight:600}.small{font-size:12.5px}
+.bold{font-weight:600}.small{font-size:14.5px}
 header{display:flex;align-items:center;gap:12px;padding:6px 14px;border-bottom:1px solid var(--b);background:var(--p);flex:0 0 auto}
-header h1{font-size:16.5px;font-weight:600}
+header h1{font-size:18.5px;font-weight:600}
 header .sp{flex:1}
-main{display:grid;grid-template-columns:330px minmax(0,1fr) 372px;flex:1 1 auto;min-height:0;overflow:hidden}
+main{display:grid;grid-template-columns:var(--lw,330px) minmax(0,1fr) var(--rw,372px);flex:1 1 auto;min-height:0;overflow:hidden;position:relative}
+/* 栏宽拖拽手柄：绝对定位在左右栏边界，8px 宽居中于边界线 */
+.gutter{position:absolute;top:0;bottom:0;width:8px;margin-left:-4px;cursor:col-resize;z-index:5;background:transparent}
+.gutter:hover,.gutter.dragging{background:var(--a);opacity:.35}
+.gutter.gl{left:var(--lw,330px)}
+.gutter.gr{left:calc(100% - var(--rw,372px))}
 .l,.c,.r{background:var(--p);overflow-y:auto;min-height:0;overscroll-behavior:contain}
 .l{border-right:1px solid var(--b)}
 .r{border-left:1px solid var(--b);background:var(--p)}
 .c{padding:12px 14px;background:var(--bg)}
 .tabs{display:flex;border-bottom:1px solid var(--b);position:sticky;top:0;background:var(--p);z-index:3}
-.tabs button{flex:1;border:none;border-radius:0;background:transparent;padding:7px 0;font-size:13.5px;min-width:0}
+.tabs button{flex:1;border:none;border-radius:0;background:transparent;padding:7px 0;font-size:15.5px;min-width:0}
 .tabs button.on{color:#fff;border-bottom:2px solid var(--a)}
 .pad{padding:9px}
 .sub{padding:7px 9px;border-bottom:1px solid var(--b);position:sticky;top:37px;background:var(--p);z-index:2}
 .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
-.chip{border:1px solid var(--b);border-radius:10px;padding:1px 8px;font-size:12px;cursor:pointer;background:var(--p2)}
+.chip{border:1px solid var(--b);border-radius:10px;padding:1px 8px;font-size:14px;cursor:pointer;background:var(--p2)}
 .chip.on{border-color:var(--a);color:#fff;background:#243651}
 .item-row{cursor:pointer;padding:5px 8px;min-height:30px;display:flex;align-items:center;gap:7px;border-bottom:1px dotted #262b33}
 .item-row:hover{background:var(--p2)}
 .item-row.sel{background:#243651}
 .item-row img{width:22px;height:22px;border-radius:3px}
 .item-row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lvl{font-size:11.5px;color:var(--m);border:1px solid var(--b);border-radius:3px;padding:0 4px}
+.lvl{font-size:13.5px;color:var(--m);border:1px solid var(--b);border-radius:3px;padding:0 4px}
 .lvl.ok{color:var(--g);border-color:#2f5c3c}
 .lvl.no{color:var(--r);border-color:#5c3034}
-h3.sec{font-size:14px;margin:2px 0 8px;color:#fff;font-weight:600}
+h3.sec{font-size:16px;margin:2px 0 8px;color:#fff;font-weight:600}
 .card{background:var(--p);border:1px solid var(--b);border-radius:6px;padding:9px;margin-bottom:9px}
 .row{display:flex;align-items:center;gap:7px;padding:2px 0}
 .row.wrap{flex-wrap:wrap}
-.kv{display:flex;justify-content:space-between;padding:1px 0;border-bottom:1px dotted var(--b);font-size:13.5px}
+.kv{display:flex;justify-content:space-between;padding:1px 0;border-bottom:1px dotted var(--b);font-size:15.5px}
 .kv .k{color:var(--m)}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
+table{width:100%;border-collapse:collapse;font-size:14.5px}
 td,th{padding:2px 5px;border:1px solid var(--b);text-align:right;white-space:nowrap}
 th{color:var(--m);font-weight:400;background:var(--p2)}
 td:first-child,th:first-child{text-align:left}
@@ -64,51 +69,52 @@ tr.done td{color:var(--m)}
 .attr-in{display:grid;grid-template-columns:52px 1fr;gap:5px;align-items:center;margin-bottom:4px}
 .attr-in input{padding:3px 6px}
 .pos{display:flex;justify-content:space-between;background:var(--p2);border:1px solid var(--b);border-radius:5px;padding:5px 8px;margin-bottom:5px}
-.tag{font-size:11px;border:1px solid var(--b);border-radius:3px;padding:0 5px;color:var(--m)}
+.tag{font-size:13px;border:1px solid var(--b);border-radius:3px;padding:0 5px;color:var(--m)}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#2b4a7a;border:1px solid #3a5f9e;padding:7px 16px;border-radius:6px;z-index:60}
 .err{position:fixed;bottom:18px;right:18px;max-width:46vw;background:#3a2226;border:1px solid #7a3a40;padding:8px 12px;border-radius:6px;z-index:61;display:flex;gap:10px;align-items:flex-start}
 .busy{position:fixed;top:8px;left:50%;transform:translateX(-50%);background:#243651;border:1px solid var(--a);padding:4px 12px;border-radius:5px;z-index:62}
 .empty{color:var(--m);padding:20px 4px;text-align:center}
-.skill-btn{border:1px solid var(--b);border-radius:4px;padding:0 5px;cursor:pointer;background:var(--p2);font-size:11px;color:var(--t)}
+.skill-btn{border:1px solid var(--b);border-radius:4px;padding:0 5px;cursor:pointer;background:var(--p2);font-size:13px;color:var(--t)}
 .skill-btn:hover{border-color:var(--a)}
 /* 宽表格放在 .tw 里自己横向滚，窄栏（手机 / 窄窗口）不会撑破页面 */
 .tw{overflow-x:auto;-webkit-overflow-scrolling:touch}
 /* 移动端底部导航：桌面端隐藏（下面的 @media 里才打开），栏位由 app.js 的 mpane 决定 */
 .mnav{display:none;flex:0 0 auto;background:var(--p);border-top:1px solid var(--b);padding-bottom:env(safe-area-inset-bottom)}
-.mnav button{flex:1;min-width:0;min-height:44px;border:none;border-radius:0;background:transparent;font-size:13.5px;padding:11px 0}
+.mnav button{flex:1;min-width:0;min-height:44px;border:none;border-radius:0;background:transparent;font-size:15.5px;padding:11px 0}
 .mnav button+button{border-left:1px solid var(--b)}
 .mnav button.on{color:#fff;box-shadow:inset 0 2px 0 var(--a)}
 
 /* ============================ 响应式 ============================ */
 /* 窄一点的桌面窗口：三栏还在，只是收窄，避免挤压中间详情 */
 @media (max-width:1200px){
-  main{grid-template-columns:290px minmax(0,1fr) 330px}
+  main{grid-template-columns:var(--lw,290px) minmax(0,1fr) var(--rw,330px)}
 }
 
 /* 手机 / 窄屏（≤900px）：一次只显示一栏，靠底部导航切换；点列表项自动跳「详情」 */
 @media (max-width:900px){
   main{display:block}
+  .gutter{display:none}          /* 手机单栏布局不需要拖拽手柄 */
   main>.l,main>.c,main>.r{display:none;height:100%;border:none}
   main.mp-l>.l,main.mp-c>.c,main.mp-r>.r{display:block}
   .mnav{display:flex}
   header{flex-wrap:wrap;row-gap:4px;padding:6px 10px;gap:8px}
-  header h1{font-size:15px}
+  header h1{font-size:17px}
   header .meta{display:none}
   header .sp{flex:1 1 0}
   button{min-height:36px}
-  button.sm{min-height:32px;padding:5px 8px;font-size:12.5px}
-  input,select,textarea{font-size:16px}          /* ≥16px 时 iOS 聚焦不会把页面放大 */
-  .tabs button{min-height:44px;padding:11px 0;font-size:13px}
+  button.sm{min-height:32px;padding:5px 8px;font-size:14.5px}
+  input,select,textarea{font-size:18px}          /* ≥16px 时 iOS 聚焦不会把页面放大 */
+  .tabs button{min-height:44px;padding:11px 0;font-size:15px}
   .sub{top:44px}
   .item-row{min-height:44px}
-  .skill-btn{padding:7px 9px;font-size:12.5px}
-  .chip{padding:4px 10px;font-size:12.5px}
+  .skill-btn{padding:7px 9px;font-size:14.5px}
+  .chip{padding:4px 10px;font-size:14.5px}
   .c{padding:9px 10px}
   /* 横屏刘海屏：左右两侧也留出安全区 */
   .l{padding-left:env(safe-area-inset-left)}
   .r{padding-right:env(safe-area-inset-right)}
   .card{padding:8px}
-  td,th{padding:3px 6px;font-size:13px}
+  td,th{padding:3px 6px;font-size:15px}
   .attr-in{grid-template-columns:76px 1fr}
   .toast{bottom:calc(58px + env(safe-area-inset-bottom));left:8px;right:8px;transform:none;text-align:center}
   .err{bottom:calc(58px + env(safe-area-inset-bottom));left:8px;right:8px;max-width:none}
@@ -117,11 +123,11 @@ tr.done td{color:var(--m)}
 
 /* 小屏手机（≤420px）：再收一点字号与留白 */
 @media (max-width:420px){
-  body{font-size:14.5px}
-  header h1{font-size:14.5px}
-  .tabs button{font-size:12.5px}
+  body{font-size:16.5px}
+  header h1{font-size:16.5px}
+  .tabs button{font-size:14.5px}
   .c{padding:8px}
-  .kv{font-size:13px}
+  .kv{font-size:15px}
 }
 </style>
 </head>
@@ -137,6 +143,9 @@ tr.done td{color:var(--m)}
   </header>
 
   <main :class="'mp-'+mpane">
+    <!-- 左右栏宽拖拽手柄（桌面端可见；手机端 CSS 隐藏）。宽度存 localStorage，刷新后保留 -->
+    <div class="gutter gl" title="拖动调整左栏宽度" @mousedown.prevent="startDrag('l',$event)"></div>
+    <div class="gutter gr" title="拖动调整右栏宽度" @mousedown.prevent="startDrag('r',$event)"></div>
     <!-- =============================== 左栏：选择器 =============================== -->
     <section class="l">
       <div class="tabs">
@@ -210,7 +219,7 @@ tr.done td{color:var(--m)}
           <div class="row wrap" style="margin-top:5px">
             <button class="sm prim" @click="recalc()" :disabled="!targets.length">复算</button>
             <button class="sm" @click="savePlan()" :disabled="!targets.length">保存</button>
-            <button class="sm" @click="exportTsv()" :disabled="!plan">导出 TSV</button>
+            <button class="sm" @click="exportTxt()" :disabled="!plan">导出 TXT</button>
             <button class="sm" @click="clearTargets()" :disabled="!targets.length">清空</button>
           </div>
           <div class="row" style="margin-top:5px">
@@ -406,7 +415,7 @@ tr.done td{color:var(--m)}
               <span class="tag">已满足 {{summary.skills_owned}} 项</span>
               <span class="tag">属性 {{attrsText}}</span>
               <span style="flex:1"></span>
-              <button class="sm" @click="exportTsv()">导出 TSV</button>
+              <button class="sm" @click="exportTxt()">导出 TXT</button>
               <button class="sm" @click="savePlan()">保存计划</button>
             </div>
             <div class="small m" style="margin-top:5px">
@@ -504,7 +513,7 @@ tr.done td{color:var(--m)}
         <div class="card" v-if="queue && queue.length">
           <h3 class="sec" style="margin-bottom:6px">当前训练队列（{{queue.length}}）</h3>
           <div class="kv" v-for="q in queue.slice(0,12)" :key="q.queue_position">
-            <span class="k">{{q.skill_id}} · {{toLevel(q.finished_level)}}</span>
+            <span class="k">{{q.skill_name || q.skill_id}} · {{toLevel(q.finished_level)}}</span>
             <span :class="(remain(q.finish_date)||0)<=0?'m':'y'">{{q.finish_date?fmtWhen2(q.finish_date):'—'}}</span>
           </div>
         </div>

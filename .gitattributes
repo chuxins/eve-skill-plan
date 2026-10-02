@@ -1,0 +1,6 @@
+# 部署相关文件在 Linux 端执行/解析（bash / systemd / GitHub Actions / pip），统一 LF
+deploy/*.sh            text eol=lf
+deploy/*.service       text eol=lf
+deploy/*.timer         text eol=lf
+.github/workflows/*.yml text eol=lf
+requirements.txt       text eol=lf

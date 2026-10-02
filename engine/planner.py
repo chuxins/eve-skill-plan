@@ -168,22 +168,13 @@ def build_plan(index, targets, current=None, attrs=None, options=None):
     }
 
 
-def plan_tsv(index, plan):
-    """计划 → 制表符分隔文本（可直接粘进 Excel / 表格软件）。"""
-    head = ["技能", "英文名", "技能组", "需求等级", "当前等级", "缺口", "训练时间",
-            "SP", "主属性", "副属性", "累计完成"]
-    lines = ["\t".join(head)]
-    for row in plan["rows"]:
-        gap = "" if row["ok"] else "+".join(f"{l['level']}级" for l in row["levels"])
-        lines.append("\t".join(str(x) for x in (
-            row["name"], row["name_en"], row["group"], row["required"], row["current"],
-            gap or "-", row["duration"], int(row["sp"]), row["primary_name"],
-            row["secondary_name"], row["end_human"])))
-    lines.append("")
-    s = plan["summary"]
-    lines.append(f"汇总\t技能 {s['skills_total']} 项（缺 {s['skills_missing']}）\t"
-                 f"总时长 {s['duration']}\t总 SP {int(s['sp'])}")
-    return "\n".join(lines)
+def plan_txt(index, plan):
+    """计划 → EVE 技能计划文本（eve-skill.com 兼容格式），每行一项：
+    <localized hint="英文名">中文名*</localized> 目标等级
+    """
+    return "\n".join(
+        f'<localized hint="{r["name_en"]}">{r["name"]}*</localized> {r["required"]}'
+        for r in plan["rows"])
 
 
 def skill_pairs(index, plan):

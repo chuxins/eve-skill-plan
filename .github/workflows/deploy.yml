@@ -1,0 +1,25 @@
+name: Deploy to server
+
+# push 到 main 后，经 SSH 到服务器执行自动更新（即时更新）；
+# 服务器上的 eve-skill-plan-update.timer 作为兜底轮询。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH 到服务器执行自动更新
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes \
+            "$SSH_USER@$SSH_HOST" 'sudo /root/eve-skill-plan/deploy/auto-update.sh'

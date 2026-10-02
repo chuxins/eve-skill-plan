@@ -217,15 +217,17 @@ ok(st == 400 and bool(d.get("error")), "空目标 → 400", st)
 st, d = call("POST", "/api/plan", {"targets": [{"kind": "type", "tid": "abc"}]})
 ok(st == 400, "非法 tid → 400", st)
 
-print("== 导出 TSV")
-st, body = call("POST", "/api/plan/tsv", {"targets": targets, "current": {}, "attrs": attrs}, raw=True)
-ok(st == 200 and body[:3] == b"\xef\xbb\xbf", "TSV 带 UTF-8 BOM")
-lines = [ln for ln in body.decode("utf-8-sig").split("\n") if ln.strip()]
-ok(lines[0].startswith("技能\t英文名") and len(lines) == 8,
-   "TSV 8 行（表头 + 6 技能 + 汇总，空行忽略）", len(lines))
-ok("汇总" in lines[-1] and "4天 13小时" in lines[-1], "TSV 汇总行含总时长", lines[-1])
-ok("飞船操控学" in body.decode("utf-8-sig") and "Caldari Battleship" in body.decode("utf-8-sig"),
-   "TSV 含中英文技能名")
+print("== 导出 TXT")
+st, body = call("POST", "/api/plan/txt", {"targets": targets, "current": {}, "attrs": attrs}, raw=True)
+text = body.decode("utf-8")
+lines = [ln for ln in text.split("\n") if ln.strip()]
+ok(st == 200 and not body.startswith(b"\xef\xbb\xbf"), "TXT 无 BOM（纯文本）", st)
+ok(len(lines) == 6, "TXT 6 行（乌鸦级 6 项需求，无表头/汇总）", len(lines))
+ok(all(ln.startswith('<localized hint="') for ln in lines), "每行以 <localized hint= 开头", lines[0])
+ok(all(ln.split("</localized> ", 1)[1] in "12345" for ln in lines), "每行结尾为 1-5 目标等级", lines[-1])
+ok(sorted(int(ln.rsplit(" ", 1)[1]) for ln in lines) == [1, 3, 3, 3, 3, 4],
+   "目标等级与乌鸦级需求一致（飞船操控学 4 / 战列舰 1 / 其余 3）", lines)
+ok("飞船操控学" in text and "Caldari Battleship" in text, "TXT 含中英文技能名")
 
 print("== 计划保存 / 载入 / 删除")
 st, d = call("POST", "/api/plans", {"name": "冒烟-乌鸦", "targets": targets, "current": cur,

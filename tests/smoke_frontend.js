@@ -37,7 +37,8 @@ const clicked = [];
 /* 视口桩：matchMedia().matches 可切换，用来模拟手机 / 桌面两种宽度 */
 const mq = { matches: false, media: '(max-width:900px)', addEventListener() {}, removeEventListener() {} };
 const win = { matchMedia: () => mq, addEventListener() {}, removeEventListener() {}, innerWidth: 1280 };
-let lastTsv = null;
+let lastTxt = null;
+let lastDownload = '';
 const store = {};
 const ls = new Proxy(store, {
   get(t, k) {
@@ -64,7 +65,7 @@ class URL2 extends URL {
 const fetchStub = async (p, o) => {
   const url = BASE + String(p).replace(/^\.?\//, '');
   const r = await globalThis.fetch(url, o);
-  if (String(p).startsWith('api/plan/tsv')) { try { lastTsv = await r.clone().text(); } catch (e) {} }
+  if (String(p).startsWith('api/plan/txt')) { try { lastTxt = await r.clone().text(); } catch (e) {} }
   return r;
 };
 
@@ -81,7 +82,11 @@ const sandbox = {
   setTimeout, clearTimeout,
   confirm: () => true,
   alert: () => {},
-  document: { createElement: tag => ({ tag, href: '', download: '', click() { clicked.push(tag); } }) },
+  document: { createElement: tag => {
+    const el = { tag, href: '', click() { clicked.push(tag); } };
+    Object.defineProperty(el, 'download', { get: () => lastDownload, set: v => { lastDownload = v; } });
+    return el;
+  } },
 };
 vm.createContext(sandbox);
 
@@ -262,18 +267,19 @@ Object.assign(inst, opts.methods, published);
   eq(inst.targets.length, 2, '载入计划恢复 2 个目标');
   eq(inst.plan.summary.skills_total, beforeTotal, '载入复算结果与保存时一致');
   eq(inst.planName, inst.saved[0].name, '计划名回填');
-  await inst.exportTsv();
-  const tsvLines = lastTsv.split('\n').filter(l => l.trim());
-  ok(tsvLines[0].startsWith('技能\t英文名\t技能组'), '导出 TSV 带中文表头', tsvLines[0]);
-  ok(/^汇总\t技能/.test(tsvLines[tsvLines.length - 1]), 'TSV 末行为汇总', tsvLines[tsvLines.length - 1]);
-  ok(tsvLines.length >= inst.plan.rows.length + 2, 'TSV 含所有行 + 汇总',
-    [tsvLines.length, inst.plan.rows.length]);
-  ok(inst.plan.rows.every(r => lastTsv.includes(r.name)), 'TSV 含每个技能名');
+  await inst.exportTxt();
+  const txtLines = lastTxt.split('\n').filter(l => l.trim());
+  ok(txtLines.every(l => l.startsWith('<localized hint="') && /<\/localized> [1-5]$/.test(l)),
+    '每行格式 <localized hint="英文">中文*</localized> 等级', txtLines[0]);
+  ok(txtLines.length >= inst.plan.rows.length, 'TXT 含所有技能行', [txtLines.length, inst.plan.rows.length]);
+  ok(inst.plan.rows.every(r => lastTxt.includes(r.name)), 'TXT 含每个技能名');
   ok(clicked.includes('a'), '触发了下载点击');
-  const tsvBuf = await (await globalThis.fetch(BASE + 'api/plan/tsv', {
+  ok(lastDownload.endsWith('.txt') && lastDownload.startsWith(
+    inst.planName.replace(/[\\/:*?"<>|]/g, '-')), '导出文件名用已保存计划名', lastDownload);
+  const txtBody = await (await globalThis.fetch(BASE + 'api/plan/txt', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(inst.query()),
-  })).arrayBuffer();
-  eq(Array.from(new Uint8Array(tsvBuf.slice(0, 3))), [0xEF, 0xBB, 0xBF], 'TSV 带 UTF-8 BOM（Excel 友好）');
+  })).text();
+  ok(txtBody.startsWith('<localized hint="'), 'TXT 直接以 <localized 开头（无 BOM / 表头）', txtBody.slice(0, 40));
   await inst.delSaved(pid);
   eq(inst.saved.length, 0, '删除后已保存计划为空');
 
