@@ -64,10 +64,73 @@ class URL2 extends URL {
 }
 const fetchStub = async (p, o) => {
   const url = BASE + String(p).replace(/^\.?\//, '');
+  const mocked = mockPlans(p, o);
+  if (mocked) return mocked;
   const r = await globalThis.fetch(url, o);
   if (String(p).startsWith('api/plan/txt')) { try { lastTxt = await r.clone().text(); } catch (e) {} }
   return r;
 };
+
+/* SSO 隔离后，计划保存/载入/删除需要服务端会话；Node 里没有浏览器 Cookie 也没有真实 EVE SSO，
+ * 所以 /api/plans* 这几个接口在测试里用进程内桩模拟「已登录」的服务端契约
+ * （真实服务端的 401 鉴权与角色隔离由 tests/smoke_http.py 用 Flask test_client 逐条断言）。
+ * 其余接口（含 /api/plan、/api/plan/txt）仍全部打真实后端。 */
+let mockAuthed = false;              // 模拟「服务端会话里有登录角色」
+const planStore = [];                // 桩里的「当前角色的已保存计划」
+let nextPlanId = 1;
+function jsonResp(obj, status = 200) {
+  const body = JSON.stringify(obj);
+  return {
+    status, ok: status < 400,
+    headers: { get: () => 'application/json' },
+    json: async () => JSON.parse(body),
+    text: async () => body,
+    clone() { return jsonResp(obj, status); },
+  };
+}
+function mockPlans(p, o) {
+  const method = (o && o.method) || 'GET';
+  const url = String(p);
+  if (url === 'api/plans' && method === 'GET') {
+    return jsonResp({ plans: planStore, authed: mockAuthed,
+      login_cid: mockAuthed ? 1234567 : null, login_name: mockAuthed ? '冒烟测试角色' : '' });
+  }
+  if (url === 'api/plans' && method === 'POST') {
+    const body = JSON.parse(o.body);
+    if (body.plan_id) {
+      const p0 = planStore.find(x => x.plan_id === body.plan_id);
+      if (!p0) return jsonResp({ error: '没有这个计划：' + body.plan_id }, 404);
+      p0.name = body.name; p0.targets = body.targets || p0.targets;
+      return jsonResp({ plan: p0 });
+    }
+    const plan = { plan_id: nextPlanId++, name: body.name, character_id: body.character_id || null,
+      targets: body.targets || [], updated_at: '2026-10-02 12:00:00' };
+    planStore.push(plan);
+    return jsonResp({ plan });
+  }
+  const m = url.match(/^api\/plans\/(\d+)(?:\/(run))?$/);
+  if (m) {
+    const pid = Number(m[1]);
+    const plan = planStore.find(x => x.plan_id === pid);
+    if (m[2] === 'run') {
+      if (!plan) return jsonResp({ error: '没有这个计划：' + pid }, 404);
+      return globalThis.fetch(BASE + 'api/plan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targets: plan.targets, current: {}, attrs: {}, options: {} }),
+      }).then(r => r.json()).then(pd => jsonResp(Object.assign(pd, {
+        name: plan.name, targets: plan.targets })));
+    }
+    if (method === 'DELETE') {
+      const i = planStore.findIndex(x => x.plan_id === pid);
+      if (i < 0) return jsonResp({ deleted: false });
+      planStore.splice(i, 1);
+      return jsonResp({ deleted: true });
+    }
+    if (!plan) return jsonResp({ error: '没有这个计划：' + pid }, 404);
+    return jsonResp({ plan });
+  }
+  return null;                       // 未命中 → 走真实后端
+}
 
 const sandbox = {
   console,
@@ -138,6 +201,8 @@ Object.assign(inst, opts.methods, published);
   ok(inst.groups.length > 5, '技能组已加载', inst.groups.length);
   eq(inst.careers.length, 40, '职业路线 40 条');
   eq(inst.saved.length, 0, '已保存计划初始为空');
+  eq(inst.loginCid, null, '启动时未登录（无会话 Cookie → loginCid 为 null）');
+  eq(inst.loggedIn, false, 'loggedIn 初始为 false（未登录不能保存）');
   ok(inst.levels.length >= 5 && inst.cats.length > 5, 'levels / cats 来自 meta', [inst.levels, inst.cats.length]);
   ok(inst.attrsText.includes('感知'), 'attrsText 渲染');
   const hasChar = inst.chars.length > 0;
@@ -254,10 +319,26 @@ Object.assign(inst, opts.methods, published);
   else eq(inst.summary.skills_missing, 7, '未授权角色时维持从零 7 项');
   ok(inst.summary.skills_missing === inst.rowsTodo.length, 'rowsTodo 与 skills_missing 一致');
 
-  section('计划：保存 → 载入 → 导出 → 删除');
+  section('计划：保存 → 载入 → 导出 → 删除（SSO 隔离）');
   const beforeTotal = inst.plan.summary.skills_total;
+
+  // 未登录：前端拦截 + 真实服务端 401（双保险）
   await inst.savePlan();
-  eq(inst.saved.length, 1, '已保存 1 条');
+  ok(inst.err.includes('未登录无法保存'), '未登录点保存被前端拦截并提示登录', inst.err);
+  eq(inst.saved.length, 0, '未登录不能保存（saved 为空）');
+  const anon = await (await globalThis.fetch(BASE + 'api/plans', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(inst.query()),
+  })).json();
+  ok(anon.error && anon.error.includes('未登录无法保存'), '未登录直连保存被真实服务端 401 拒绝', anon);
+
+  // 模拟 SSO 登录（真实场景由 OAuth 回调写入会话，前端经 api/characters 的 login 字段读到）
+  mockAuthed = true;
+  inst.loginCid = 1234567;
+  inst.loginName = '冒烟测试角色';
+  ok(inst.loggedIn === true, 'loggedIn 计算属性随会话状态翻转');
+  await inst.savePlan();
+  eq(inst.saved.length, 1, '登录后已保存 1 条');
   ok(inst.saved[0].plan_id && inst.saved[0].name, '列表项含 plan_id 与名称', inst.saved[0]);
   const pid = inst.saved[0].plan_id;
   inst.clearTargets();
@@ -267,7 +348,11 @@ Object.assign(inst, opts.methods, published);
   eq(inst.targets.length, 2, '载入计划恢复 2 个目标');
   eq(inst.plan.summary.skills_total, beforeTotal, '载入复算结果与保存时一致');
   eq(inst.planName, inst.saved[0].name, '计划名回填');
+  // 导出按「从零」口径（不依赖测试角色已掌握多少技能）：TXT 应覆盖全部需求行
+  const savedCurrent = inst.current;
+  inst.current = {};
   await inst.exportTxt();
+  inst.current = savedCurrent;
   const txtLines = lastTxt.split('\n').filter(l => l.trim());
   ok(txtLines.every(l => l.startsWith('<localized hint="') && /<\/localized> [1-5]$/.test(l)),
     '每行格式 <localized hint="英文">中文*</localized> 等级', txtLines[0]);
@@ -282,6 +367,7 @@ Object.assign(inst, opts.methods, published);
   ok(txtBody.startsWith('<localized hint="'), 'TXT 直接以 <localized 开头（无 BOM / 表头）', txtBody.slice(0, 40));
   await inst.delSaved(pid);
   eq(inst.saved.length, 0, '删除后已保存计划为空');
+  mockAuthed = false;                          // 复位「会话状态」桩
 
   section('缓存与登录');
   U.cacheSet('cid', 123);

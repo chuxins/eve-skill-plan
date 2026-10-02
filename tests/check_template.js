@@ -291,7 +291,10 @@ function renderState(label, marks) {
 const ATTRS = { charisma: 17, intelligence: 17, memory: 17, perception: 17, willpower: 17 };
 const TIME = /\d{2}-\d{2} \d{2}:\d{2}/;
 
-renderState('初始（未选角色 / 无数据）', ['EVE 技能规划', '未选角色', '角色与属性', '快速开始', '还没有目标']);
+renderState('初始（未选角色 / 无数据 / 未登录）',
+  ['EVE 技能规划', '未选角色', '角色与属性', '快速开始', '还没有目标',
+   'SSO：未登录', '未登录：无法保存到服务端', '登录后这里显示你自己的已保存计划',
+   'SSO 登录', '保存计划', '登录（EVE SSO）']);
 
 /* 选好角色、boot() 完成后的状态：5 维属性 + 总技能点 + 训练队列 + 已保存计划 */
 Object.assign(inst, {
@@ -314,11 +317,12 @@ Object.assign(inst, {
   careers: [{ plan_id: 'caldari_wealth', name: '加达里财富猎手', name_en: 'Caldari Wealth Hunter', skills: 2 }],
   saved: [{ plan_id: 'p1', name: '乌鸦级计划', updated_at: '2026-09-28 12:00', character_id: 12345,
             targets: [{ tid: 638 }] }],
+  loginCid: 12345, loginName: '测试角色',
 });
-renderState('boot 之后（角色 + 属性 + 队列）',
+renderState('boot 之后（角色 + 属性 + 队列 + 已登录）',
   ['技能 520 · 类型 30000 · 职业路线 40', '测试角色', '总技能点', '12.3M', '已学技能',
    '魅力', '智力', '记忆', '感知', '毅力', '当前训练队列（1）', '加达里战列舰', '到 Ⅳ 级', TIME,
-   '最近保存', '乌鸦级计划']);
+   '最近保存', '乌鸦级计划', 'SSO：已登录', 'SSO 登录']);
 
 /* 技能库页签 + 技能详情 */
 inst.tab = 'skills';

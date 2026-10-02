@@ -138,6 +138,7 @@ tr.done td{color:var(--m)}
     <span class="m small meta" v-if="meta">技能 {{meta.counts.skills}} · 类型 {{meta.counts.types}} · 职业路线 {{meta.counts.careers}} · 索引 {{meta.sde.built_at}}</span>
     <span class="sp"></span>
     <span class="small" :class="cid?'g':'m'">角色：{{charName}}</span>
+    <span class="small" :class="loggedIn?'g':'y'" :title="loggedIn?('SSO 登录：'+loginName):'未登录，无法保存技能训练计划'">SSO：{{loggedIn?'已登录':'未登录'}}</span>
     <button class="sm" v-if="targets.length" @click="recalc()">复算计划</button>
     <button class="sm prim" @click="login()">登录 EVE 角色</button>
   </header>
@@ -222,6 +223,7 @@ tr.done td{color:var(--m)}
             <button class="sm" @click="exportTxt()" :disabled="!plan">导出 TXT</button>
             <button class="sm" @click="clearTargets()" :disabled="!targets.length">清空</button>
           </div>
+          <div class="small y" v-if="!loggedIn" style="margin-top:6px">未登录：无法保存到服务端（服务端也会拒绝 401）。先点右上角「登录 EVE 角色」完成 EVE SSO，保存的计划按角色隔离、仅本人可见。</div>
           <div class="row" style="margin-top:5px">
             <span class="small m">排序</span>
             <select v-model="opts.order" @change="recalc()">
@@ -249,6 +251,7 @@ tr.done td{color:var(--m)}
               <span class="skill-btn r" @click="delSaved(p.plan_id)">删</span>
             </div>
           </template>
+          <div class="empty" v-else-if="!loggedIn" style="margin-top:8px">未登录：登录后这里显示你自己的已保存计划（按 SSO 角色隔离）</div>
         </div>
       </template>
     </section>
@@ -487,6 +490,8 @@ tr.done td{color:var(--m)}
           <div class="kv" v-if="totalSp != null"><span class="k">总技能点</span><span>{{n(totalSp)}}</span></div>
           <div class="kv" v-if="cid"><span class="k">已学技能</span><span>{{Object.keys(current).length}} 项</span></div>
           <div class="kv" v-if="cid"><span class="k">角色 ID</span><span>{{cid}}</span></div>
+          <div class="kv" v-if="loggedIn"><span class="k">SSO 登录</span><span class="g">{{loginName}}</span></div>
+          <div class="kv" v-else><span class="k">SSO 登录</span><span class="y">未登录</span></div>
           <div class="row wrap" style="margin-top:6px" v-if="chars.length">
             <span class="chip" v-for="c in chars" :key="c.id" :class="{on:cid===c.id}"
                   @click="pickChar(c.id)">{{c.name}}</span>
@@ -533,6 +538,11 @@ tr.done td{color:var(--m)}
             <span class="k"><a @click="runSaved(p.plan_id,false)">{{p.name}}</a></span>
             <span class="m small">{{p.updated_at}}</span>
           </div>
+        </div>
+
+        <div class="card" v-else-if="!loggedIn">
+          <h3 class="sec" style="margin-bottom:6px">保存计划</h3>
+          <div class="small m">登录（EVE SSO）后，技能训练计划可保存到服务端并按角色隔离，仅本人可见。</div>
         </div>
       </div>
     </section>

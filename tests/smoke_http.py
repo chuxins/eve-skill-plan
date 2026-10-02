@@ -229,28 +229,79 @@ ok(sorted(int(ln.rsplit(" ", 1)[1]) for ln in lines) == [1, 3, 3, 3, 3, 4],
    "目标等级与乌鸦级需求一致（飞船操控学 4 / 战列舰 1 / 其余 3）", lines)
 ok("飞船操控学" in text and "Caldari Battleship" in text, "TXT 含中英文技能名")
 
-print("== 计划保存 / 载入 / 删除")
+print("== 计划保存 / SSO 隔离（Flask test_client + 临时库，不碰线上数据）")
+import tempfile
+import config as _cfg
+_cfg.APP_DB = os.path.join(tempfile.mkdtemp(prefix="esp_test_"), "test.db")
+client = webapp.app.test_client()
+
+# 未登录：保存被拒（401），也看不到 / 删不掉任何计划
 st, d = call("POST", "/api/plans", {"name": "冒烟-乌鸦", "targets": targets, "current": cur,
                                     "attrs": attrs, "character_id": CHAR_ID})
-pid = d["plan"]["plan_id"]
-ok(st == 200 and bool(pid), "POST /api/plans 创建", pid)
-st, d = call("GET", "/api/plans")
-ok(any(p["plan_id"] == pid for p in d["plans"]), "GET /api/plans 列表可见")
-st, d = call("GET", f"/api/plans/{pid}")
-ok(d["plan"]["name"] == "冒烟-乌鸦" and bool(d["plan"]["targets"]), "GET /api/plans/<id> 详情")
-st, d = call("POST", f"/api/plans/{pid}/run", {"refresh": False})
-ok(d["summary"]["skills_missing"] == 3 and d["name"] == "冒烟-乌鸦", "run 用快照复算", d["summary"])
-st, d = call("POST", f"/api/plans/{pid}/run", {"refresh": True, "character_id": CHAR_ID})
-ok(st == 200 and d["summary"]["skills_missing"] <= 6, "run refresh=True 重新拉 ESI",
-   d["summary"]["skills_missing"])
+ok(st == 401 and "未登录无法保存" in d.get("error", ""), "未登录保存 → 401（SSO 隔离）", st)
+r = client.get("/api/plans")
+jd = r.get_json()
+ok(r.status_code == 200 and jd["plans"] == [] and jd["authed"] is False,
+   "未登录 GET /api/plans → 空列表 + authed=false", jd)
+r = client.get("/api/plans/1")
+ok(r.status_code == 404, "未登录 GET 计划详情 → 404（不泄露他人数据）", r.status_code)
+r = client.delete("/api/plans/1")
+ok(r.status_code == 200 and r.get_json()["deleted"] is False, "未登录 DELETE → deleted=false", r.get_json())
+
+# 角色甲登录：能创建 / 读取 / 复算 / 更新 / 删除自己的计划
+with client.session_transaction() as s:
+    s["cid"], s["name"] = 1111, "冒烟角色甲"
+r = client.post("/api/plans", json={"name": "冒烟-乌鸦", "targets": targets, "current": cur,
+                                    "attrs": attrs, "character_id": CHAR_ID})
+pid = r.get_json()["plan"]["plan_id"]
+ok(r.status_code == 200 and bool(pid), "登录后 POST /api/plans 创建", pid)
+r = client.get("/api/plans")
+jd = r.get_json()
+ok(jd["authed"] is True and jd["login_cid"] == 1111 and jd["login_name"] == "冒烟角色甲"
+   and any(p["plan_id"] == pid for p in jd["plans"]), "登录后列表含本人计划 + 会话信息", jd["login_name"])
+r = client.get(f"/api/plans/{pid}")
+ok(r.get_json()["plan"]["name"] == "冒烟-乌鸦" and bool(r.get_json()["plan"]["targets"]),
+   "登录后 GET 详情")
+r = client.post(f"/api/plans/{pid}/run", json={"refresh": False})
+ok(r.status_code == 200 and r.get_json()["name"] == "冒烟-乌鸦"
+   and r.get_json()["summary"]["skills_missing"] == 3, "run 用保存快照复算", r.get_json().get("summary"))
+r = client.post("/api/plans", json={"plan_id": pid, "name": "冒烟-改名", "targets": targets,
+                                    "current": cur, "attrs": attrs, "character_id": CHAR_ID})
+ok(r.status_code == 200 and r.get_json()["plan"]["name"] == "冒烟-改名", "本人可更新计划", r.get_json())
+
+# 角色乙登录：完全看不到 / 改不动甲的计划（按 SSO 角色隔离）
+with client.session_transaction() as s:
+    s["cid"], s["name"] = 2222, "冒烟角色乙"
+r = client.get("/api/plans")
+ok(r.status_code == 200 and r.get_json()["plans"] == [], "角色乙列表为空（看不到甲的）", r.get_json()["plans"])
+r = client.get(f"/api/plans/{pid}")
+ok(r.status_code == 404, "角色乙 GET 甲的计划 → 404", r.status_code)
+r = client.post(f"/api/plans/{pid}/run", json={})
+ok(r.status_code == 404, "角色乙 run 甲的计划 → 404", r.status_code)
+r = client.post("/api/plans", json={"plan_id": pid, "name": "劫持", "targets": targets})
+ok(r.status_code == 404, "角色乙不能更新甲的计划", r.status_code)
+r = client.delete(f"/api/plans/{pid}")
+ok(r.status_code == 200 and r.get_json()["deleted"] is False, "角色乙删不掉甲的计划", r.get_json())
+
+# 角色甲回来：计划还在（含更新），可删除；删除后 404
+with client.session_transaction() as s:
+    s["cid"], s["name"] = 1111, "冒烟角色甲"
+r = client.get(f"/api/plans/{pid}")
+ok(r.status_code == 200 and r.get_json()["plan"]["name"] == "冒烟-改名", "甲的更新已生效（计划仍在）")
+r = client.delete(f"/api/plans/{pid}")
+ok(r.status_code == 200 and r.get_json()["deleted"] is True, "本人删除计划", r.get_json())
+r = client.get(f"/api/plans/{pid}")
+ok(r.status_code == 404, "删除后再查 → 404", r.status_code)
+with client.session_transaction() as s:
+    s.clear()
+
+# 真实服务端（无 Cookie 的匿名视角）：api/characters 不报已登录；不存在的计划 404
+st, d = call("GET", "/api/characters")
+ok(st == 200 and d.get("login") is None, "api/characters 匿名访问 login 字段为 null", d.get("login"))
 st, d = call("GET", "/api/plans/999999")
 ok(st == 404, "GET 不存在计划 → 404", st)
 st, d = call("POST", "/api/plans/999999/run", {})
 ok(st == 404, "run 不存在计划 → 404", st)
-st, d = call("DELETE", f"/api/plans/{pid}")
-ok(d.get("deleted") is True, "DELETE 计划")
-st, d = call("GET", f"/api/plans/{pid}")
-ok(st == 404, "删除后再查 → 404", st)
 
 print("== 角色 / SSO")
 st, d = call("GET", "/api/characters")

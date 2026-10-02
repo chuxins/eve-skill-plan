@@ -12,6 +12,7 @@
 
 import json
 import os
+import secrets
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -33,6 +34,35 @@ _CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 PUBLIC_BASE = os.environ.get("EVE_SKILL_PLAN_URL", "http://8.156.88.102/skills").rstrip("/")
 
 PORT = int(os.environ.get("EVE_SKILL_PLAN_PORT") or 8091)
+
+# SSO 登录会话：签名 Cookie 标识「当前登录角色」（保存/读取计划的隔离依据）。
+# 密钥优先级：环境变量 EVE_SKILL_PLAN_SECRET → data/.session_secret（持久化，重启不失效）。
+SESSION_COOKIE_NAME = "esp_session"
+SESSION_DAYS = 30
+
+
+def _session_secret():
+    """会话签名密钥（持久化在 data/.session_secret，勿入库）。"""
+    env = os.environ.get("EVE_SKILL_PLAN_SECRET")
+    if env:
+        return env
+    path = os.path.join(DATA_DIR, ".session_secret")
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        if not os.path.exists(path):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(secrets.token_hex(32))
+        with open(path, encoding="utf-8") as f:
+            secret = f.read().strip()
+        if secret:
+            return secret
+    except OSError:
+        pass
+    # 仅兜底（数据目录不可写时）：生产环境应配 EVE_SKILL_PLAN_SECRET
+    return "eve-skill-plan-dev-secret"
+
+
+SESSION_SECRET = _session_secret()
 
 SSO_AUTHORIZE = "https://login.eveonline.com/v2/oauth/authorize"
 TOKEN_URL = "https://login.eveonline.com/v2/oauth/token"

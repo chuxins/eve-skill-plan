@@ -8,6 +8,10 @@
 - 角色：/api/characters（列表/退出）、/api/characters/<cid>/overview（技能+属性+队列）
 - OAuth：/api/oauth/url → 浏览器跳转 EVE SSO → nginx 反代 /skills/oauth/callback
 
+SSO 隔离：OAuth 成功后签发会话 Cookie（esp_session），保存的技能训练计划
+按「创建它的登录角色」隔离 —— 未登录无法保存（POST /api/plans → 401），
+也只能读取/修改/删除自己创建的计划。
+
 nginx 里 /skills/ 前缀会被剥掉（proxy_pass 末尾带 /），因此本站路径都是裸的，
 前端一律用相对路径（static/…、api/…），换部署前缀不用改代码。
 """
@@ -18,9 +22,10 @@ import json
 import logging
 import os
 import secrets
+from datetime import timedelta
 from urllib.parse import urlencode
 
-from flask import Flask, jsonify, redirect, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory, session
 
 import config
 import esi
@@ -38,7 +43,38 @@ try:                                        # 单进程部署：OAuth pending st
 except Exception:
     pass
 
+# SSO 登录会话：签名 Cookie 标识「当前登录角色」，保存/读取计划按它隔离。
+# 密钥持久化在 data/.session_secret（见 config.SESSION_SECRET），重启不失效。
+app.secret_key = config.SESSION_SECRET
+app.config.update(
+    SESSION_COOKIE_NAME=config.SESSION_COOKIE_NAME,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(days=config.SESSION_DAYS),
+)
+
 _states = {}                                # state -> {verifier, next}
+
+
+# ---------------------------------------------------------------- 登录身份
+def _login():
+    """当前 SSO 登录身份 (cid, name)；未登录返回 (None, None)。"""
+    cid = session.get("cid")
+    if not cid:
+        return None, ""
+    try:
+        cid = int(cid)
+    except (TypeError, ValueError):
+        return None, ""
+    return cid, session.get("name") or str(cid)
+
+
+def _login_or_401():
+    """要求已登录（保存计划的前置条件）；未登录返回 (None, 401 响应)。"""
+    cid, _ = _login()
+    if not cid:
+        return None, _fail("未登录无法保存技能训练计划（请先通过 EVE SSO 登录）", 401)
+    return cid, None
 
 
 # ---------------------------------------------------------------- 通用
@@ -393,25 +429,43 @@ def api_plan_txt():
 
 @app.route("/api/plans", methods=["GET", "POST"])
 def api_plans():
+    cid, name = _login()
     if request.method == "GET":
-        return jsonify({"plans": store.list_plans()})
+        # 只返回当前 SSO 登录角色的计划；未登录 → 空列表（authed=false），前端据此显示登录引导
+        return jsonify({"plans": store.list_plans(cid) if cid else [],
+                        "authed": cid is not None,
+                        "login_cid": cid, "login_name": name})
+    # 保存必须登录（SSO 隔离）：未登录直接 401
+    if not cid:
+        return _fail("未登录无法保存技能训练计划（请先通过 EVE SSO 登录）", 401)
     data = _payload()
     targets = _normalize_targets(data.get("targets"))
     if not targets:
         return _fail("计划至少要有一个目标")
+    plan_id = data.get("plan_id")
+    if plan_id:                              # 更新已有计划：必须是本人创建（隔离）
+        existing = store.get_plan(plan_id, owner_cid=cid)
+        if not existing:
+            return _fail(f"没有这个计划：{plan_id}", 404)
+        plan_id = int(plan_id)
     plan = store.save_plan(data.get("name"), targets, skills=data.get("current"),
                            attrs=data.get("attrs"), options=data.get("options"),
                            character_id=data.get("character_id"),
-                           plan_id=data.get("plan_id"))
+                           owner_cid=cid, plan_id=plan_id)
     return jsonify({"plan": plan})
 
 
 @app.route("/api/plans/<int:plan_id>", methods=["GET", "DELETE"])
 def api_plan_item(plan_id):
+    cid, _ = _login()
+    if not cid:                              # 未登录视为「不存在」，不泄露任何计划
+        if request.method == "DELETE":
+            return jsonify({"deleted": False})
+        return _fail(f"没有这个计划：{plan_id}", 404)
     if request.method == "DELETE":
-        ok = store.delete_plan(plan_id)
+        ok = store.delete_plan(plan_id, owner_cid=cid)
         return jsonify({"deleted": ok})
-    plan = store.get_plan(plan_id)
+    plan = store.get_plan(plan_id, owner_cid=cid)
     if not plan:
         return _fail(f"没有这个计划：{plan_id}", 404)
     return jsonify({"plan": plan})
@@ -419,8 +473,9 @@ def api_plan_item(plan_id):
 
 @app.route("/api/plans/<int:plan_id>/run", methods=["POST"])
 def api_plan_run(plan_id):
-    """载入已保存计划并用其快照（或指定角色）重新计算。"""
-    saved = store.get_plan(plan_id)
+    """载入已保存计划并用其快照（或指定角色）重新计算（仅本人创建的计划）。"""
+    cid, _ = _login()
+    saved = store.get_plan(plan_id, owner_cid=cid) if cid else None
     if not saved:
         return _fail(f"没有这个计划：{plan_id}", 404)
     data = _payload()
@@ -445,17 +500,25 @@ def api_plan_run(plan_id):
 # ---------------------------------------------------------------- 角色 / SSO
 @app.route("/api/characters")
 def api_characters():
-    """已授权角色（含共享 token 目录里其他站点授权过的角色）。"""
+    """已授权角色（含共享 token 目录里其他站点授权过的角色）+ 当前 SSO 登录身份。"""
     try:
         chars = esi.list_characters()
     except Exception as exc:
         log.warning("读取角色列表失败：%s", exc)
         chars = []
-    return jsonify({"characters": chars, "token_dir": config.TOKEN_DIR})
+    login_cid, login_name = _login()
+    return jsonify({
+        "characters": chars,
+        "token_dir": config.TOKEN_DIR,
+        "login": {"cid": login_cid, "name": login_name} if login_cid else None,
+    })
 
 
 @app.route("/api/characters/<int:cid>", methods=["DELETE"])
 def api_character_forget(cid):
+    cur, _ = _login()
+    if cur == cid:                           # 退出的是当前登录角色 → 一并清掉会话
+        session.clear()
     return jsonify(esi.forget(cid))
 
 
@@ -538,7 +601,11 @@ def oauth_callback():
         log.exception("OAuth 换取 token 失败")
         return _fail(f"授权失败：{exc}", 500)
     esi.save_token(result["id"], result["token"])
-    log.info("角色 %s(%s) 授权成功，scopes=%s", result["name"], result["id"], result["scopes"])
+    # SSO 登录成功：签发会话 Cookie，后续保存/读取计划以此角色隔离
+    session.permanent = True
+    session["cid"] = int(result["id"])
+    session["name"] = result["name"]
+    log.info("角色 %s(%s) 授权成功并登录，scopes=%s", result["name"], result["id"], result["scopes"])
     # 回调路径被 nginx 剥掉 /skills 前缀，故用相对路径回站点根（index.html 读 ?cid=）
     return redirect(pending.get("next") or f"./?cid={result['id']}")
 

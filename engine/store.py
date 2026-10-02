@@ -2,6 +2,10 @@
 
 技能索引是只读的（build_index.py 生成），用户数据只放这里：
 计划名 / 目标列表 / 快照的当前技能与属性，便于离线复算与历史对比。
+
+SSO 隔离：每条计划带 owner_cid（创建它的 SSO 登录角色），
+所有读取/更新/删除都按 owner_cid 过滤 —— 未登录看不到任何计划，
+不同角色之间互不可见（2026-10 新增，存量无主计划自动转为不可见）。
 """
 
 import json
@@ -16,6 +20,7 @@ CREATE TABLE IF NOT EXISTS plans(
     plan_id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL DEFAULT '',
     character_id INTEGER,
+    owner_cid INTEGER,
     targets_json TEXT NOT NULL DEFAULT '[]',
     skills_json TEXT NOT NULL DEFAULT '{}',
     attrs_json TEXT NOT NULL DEFAULT '{}',
@@ -25,12 +30,21 @@ CREATE TABLE IF NOT EXISTS plans(
 """
 
 
+def _migrate(conn):
+    """存量库补列：旧版 plans 表没有 owner_cid，隔离后旧记录视为无主、不再可见。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(plans)")}
+    if "owner_cid" not in cols:
+        conn.execute("ALTER TABLE plans ADD COLUMN owner_cid INTEGER")
+        conn.commit()
+
+
 def connect():
-    """打开应用库（必要时建表）。"""
+    """打开应用库（必要时建表 / 迁移）。"""
     os.makedirs(os.path.dirname(config.APP_DB), exist_ok=True)
     conn = sqlite3.connect(config.APP_DB, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -56,28 +70,37 @@ def _row_to_plan(row):
     }
 
 
-def list_plans():
+def list_plans(owner_cid=None):
+    """某登录角色可见的计划列表（未登录/无主 → 空，不泄露他人数据）。"""
+    if owner_cid is None:
+        return []
     conn = connect()
     try:
         return [_row_to_plan(r) for r in conn.execute(
-            "SELECT * FROM plans ORDER BY updated_at DESC, plan_id DESC")]
+            "SELECT * FROM plans WHERE owner_cid=? ORDER BY updated_at DESC, plan_id DESC",
+            (int(owner_cid),))]
     finally:
         conn.close()
 
 
-def get_plan(plan_id):
+def get_plan(plan_id, owner_cid=None):
+    """按 owner 取计划；不是本人创建（或未登录）一律返回 None。"""
+    if owner_cid is None:
+        return None
     conn = connect()
     try:
-        row = conn.execute("SELECT * FROM plans WHERE plan_id=?", (int(plan_id),)).fetchone()
+        row = conn.execute("SELECT * FROM plans WHERE plan_id=? AND owner_cid=?",
+                           (int(plan_id), int(owner_cid))).fetchone()
         return _row_to_plan(row) if row else None
     finally:
         conn.close()
 
 
 def save_plan(name, targets, skills=None, attrs=None, options=None,
-              character_id=None, plan_id=None):
-    """新建或更新计划，返回计划 dict。"""
+              character_id=None, owner_cid=None, plan_id=None):
+    """新建或更新计划（owner_cid 是 SSO 登录角色，保存的隔离边界），返回计划 dict。"""
     now = time.strftime("%Y-%m-%d %H:%M:%S")
+    owner = int(owner_cid) if owner_cid else None
     payload = (name or "未命名计划", json.dumps(targets or [], ensure_ascii=False),
                json.dumps(skills or {}, ensure_ascii=False),
                json.dumps(attrs or {}, ensure_ascii=False),
@@ -87,24 +110,31 @@ def save_plan(name, targets, skills=None, attrs=None, options=None,
     try:
         if plan_id:
             conn.execute("UPDATE plans SET name=?,targets_json=?,skills_json=?,attrs_json=?,"
-                         "options_json=?,character_id=?,updated_at=? WHERE plan_id=?",
-                         payload + (now, int(plan_id)))
+                         "options_json=?,character_id=?,owner_cid=?,updated_at=? "
+                         "WHERE plan_id=? AND owner_cid=?",
+                         payload + (owner, now, int(plan_id), owner))
         else:
             cur = conn.execute("INSERT INTO plans(name,targets_json,skills_json,attrs_json,"
-                               "options_json,character_id,created_at,updated_at) "
-                               "VALUES(?,?,?,?,?,?,?,?)", payload + (now, now))
+                               "options_json,character_id,owner_cid,created_at,updated_at) "
+                               "VALUES(?,?,?,?,?,?,?,?,?)",
+                               payload + (owner, now, now))
             plan_id = cur.lastrowid
         conn.commit()
-        row = conn.execute("SELECT * FROM plans WHERE plan_id=?", (plan_id,)).fetchone()
-        return _row_to_plan(row)
+        row = conn.execute("SELECT * FROM plans WHERE plan_id=? AND owner_cid=?",
+                           (plan_id, owner)).fetchone()
+        return _row_to_plan(row) if row else None
     finally:
         conn.close()
 
 
-def delete_plan(plan_id):
+def delete_plan(plan_id, owner_cid=None):
+    """仅删除本人创建的计划；返回是否真的删掉了。"""
+    if owner_cid is None:
+        return False
     conn = connect()
     try:
-        cur = conn.execute("DELETE FROM plans WHERE plan_id=?", (int(plan_id),))
+        cur = conn.execute("DELETE FROM plans WHERE plan_id=? AND owner_cid=?",
+                           (int(plan_id), int(owner_cid)))
         conn.commit()
         return cur.rowcount > 0
     finally:

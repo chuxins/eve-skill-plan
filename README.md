@@ -28,6 +28,8 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
 - 当前数据量：**511 个技能 / 40 条职业路线 / 24 个技能组**
 
 已保存计划存在 `data/app.db`（SQLite，表 `plans`），与技能索引库分开，删 `skills.db` 不影响存档。
+每条计划带 `owner_cid`（创建它的 SSO 登录角色）：**未登录不能保存**（服务端返回 401），
+登录后也只能看到 / 修改 / 删除自己创建的计划，角色之间互相隔离；旧库首次启动自动迁移。
 
 ## 功能
 
@@ -41,9 +43,10 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
   - 排序：`前置优先`（拓扑序，可自上而下依次训练）/ `耗时最短`
   - `include_owned` 可把已满足的技能一并列出；已满足/待训练分区显示
   - **导出 TXT**：EVE 技能计划文本（`<localized hint="英文名">中文名*</localized> 等级`，每行一项，可粘贴导入游戏 / 第三方规划工具）
-  - **保存计划**：命名保存到 `data/app.db`，列表里可载入（用保存时的目标与快照复算）或 `refresh` 用当前角色重算，可删除
-- **角色与属性**：页头「登录」走 EVE SSO；已授权角色直接可选，
-  显示角色名、技能点、有效属性（可手改/用预设）、**当前训练队列**（剩余时间/完成时间）、「退出登录」注销该角色
+  - **保存计划**：需先「登录 EVE 角色」（EVE SSO）；命名保存到 `data/app.db` 并按登录角色隔离，列表里可载入（用保存时的目标与快照复算）或 `refresh` 用当前角色重算，可删除
+- **角色与属性 / SSO 登录**：页头「登录」走 EVE SSO（PKCE）；授权成功即**登录**并签发会话 Cookie
+  （`esp_session`，HttpOnly，30 天，密钥持久化在 `data/.session_secret`，可用 `EVE_SKILL_PLAN_SECRET` 覆盖）；
+  已授权角色直接可选，显示角色名、技能点、有效属性（可手改/用预设）、**当前训练队列**（剩余时间/完成时间）、「退出登录」注销该角色
 - **属性/时长口径**：`SP(L) = 250 × rank × 2^(2.5L − 2.5)`；速率 = `主属性 + 副属性 / 2` SP/分钟；
   只估算「技能等级从 0 升到目标等级」的时间，不含角色当前等级内的技能点进度（与 pyfa 口径一致）
 
@@ -56,7 +59,7 @@ curl -s http://127.0.0.1:8091/healthz  # 健康检查（返回技能/类型/需�
 - `engine/planner.py`：`plan(targets, current, attrs, options)` → `{rows, summary}`；
   `rows` 按前置优先排序并带 `ok`（已满足）标记，`summary` 含
   `skills_total / skills_missing / skills_owned / sp / seconds / duration / attributes / rate_note`
-- `engine/store.py`：`plans` 表的存取（`data/app.db`）
+- `engine/store.py`：`plans` 表的存取（`data/app.db`）；`owner_cid` 按 SSO 登录角色隔离，旧库自动迁移（存量无主计划转为不可见）
 - `esi.py` / `oauth.py`：PKCE(S256) 授权、token 刷新、角色技能/属性/队列/技能点读取；
   token 目录 `~/.eve-skill-plan/tokens/<cid>.json`（`EVE_SKILL_PLAN_TOKEN_DIR` 可覆盖）
 - SDE attributeID 常量集中在 `config.py`（`requiredSkill1..5` / 对应等级 / 主副属性 / rank），换 SDE 只需改这里

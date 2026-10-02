@@ -15,8 +15,9 @@ const app = createApp({
       /* 左右栏宽度（px）：由 .gutter 拖拽手柄调整，存 localStorage，刷新后保留 */
       lw: 330, rw: 372,
       meta: null, busy: '', err: '', toast: '',
-      // 角色 / 属性
+      // 角色 / 属性（loginCid/loginName 是服务端会话里的 SSO 登录身份，保存计划按它隔离）
       chars: [], cid: null, cname: '', current: {}, attrs: {}, queue: null, totalSp: null,
+      loginCid: null, loginName: '',
       // 技能库
       groups: [], gid: null, gq: '', skills: [], skill: null,
       // 需求查询
@@ -40,6 +41,8 @@ const app = createApp({
       const eff = this.summary ? this.summary.attributes : this.attrs;
       return Object.keys(eff).map(k => `${attrName(k)} ${Math.round(eff[k])}`).join(' · ');
     },
+    // 当前是否处于 SSO 登录状态（服务端会话里有登录角色 → 计划才能保存 / 可见）
+    loggedIn() { return !!this.loginCid; },
   },
   methods: {
     // ---------------------------------------------------------- 基础
@@ -114,7 +117,10 @@ const app = createApp({
       try {
         const d = await API('api/characters');
         this.chars = d.characters || [];
-      } catch (e) { this.chars = []; }
+        const lg = d.login;
+        this.loginCid = lg && lg.cid ? Number(lg.cid) : null;
+        this.loginName = (lg && lg.name) || '';
+      } catch (e) { this.chars = []; this.loginCid = null; this.loginName = ''; }
       const ids = this.chars.map(c => c.id);
       const cid = select && ids.includes(select) ? select : (ids.includes(this.cid) ? this.cid : ids[0]);
       this.cid = cid || null;
@@ -265,6 +271,11 @@ const app = createApp({
     },
     async savePlan() {
       if (!this.targets.length) { this.err = '还没有目标，先添加目标再保存'; return; }
+      // SSO 隔离：未登录不能保存（服务端同样会拒绝并返回 401）
+      if (!this.loggedIn) {
+        this.err = '未登录无法保存技能训练计划：请先点右上角「登录 EVE 角色」完成 EVE SSO 授权';
+        return;
+      }
       try {
         await API_POST('api/plans', { name: this.planName, targets: this.targets,
           current: this.current, attrs: this.attrs, options: this.opts, character_id: this.cid });
