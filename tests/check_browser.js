@@ -6,8 +6,8 @@
  *   3) 桌面宽度下 main 是「当前栏位」class 的宿主、底部导航存在但被 CSS 隐藏。
  * 手机布局（390×844 真视口、单栏切换、触控目标）由 tests/check_mobile.js 负责。
  * 用法：node tests/check_browser.js
- *       BASE=http://127.0.0.1/skills/ node tests/check_browser.js      # 走 nginx
- *       EVE_SKILL_PLAN_BASE=http://127.0.0.1:8091/ node tests/check_browser.js
+ *       BASE=http://127.0.0.1/eveskillplanner/ node tests/check_browser.js   # 走 nginx
+ *       EVE_SKILL_PLAN_BASE=http://127.0.0.1:8092/ node tests/check_browser.js
  *       CHROME_BIN=/usr/bin/chromium node tests/check_browser.js
  *       WINDOW_SIZE=390,844 node tests/check_browser.js                # 换个视口再看一遍
  * 退出码：0 通过（含「跳过」）/ 1 有断言失败
@@ -17,7 +17,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
-const BASE = (process.env.BASE || process.env.EVE_SKILL_PLAN_BASE || 'http://127.0.0.1:8091/');
+const BASE = (process.env.BASE || process.env.EVE_SKILL_PLAN_BASE || 'http://127.0.0.1:8092/');
 /* 视口：默认桌面宽度（三栏布局）；WINDOW_SIZE=390,844 可以按手机宽度再看一遍 */
 const WINDOW_SIZE = process.env.WINDOW_SIZE || '1280,900';
 

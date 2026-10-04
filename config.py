@@ -30,10 +30,12 @@ TOKEN_DIR = os.environ.get("EVE_SKILL_PLAN_TOKEN_DIR") or os.path.expanduser(
 
 _CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
-# 公网基址：OAuth 成功后回跳前端（本站挂在 nginx 的 /skills/ 子路径下）
-PUBLIC_BASE = os.environ.get("EVE_SKILL_PLAN_URL", "http://8.156.88.102/skills").rstrip("/")
+# 公网基址：OAuth 成功后回跳前端（本站挂在 nginx 的 /eveskillplanner/ 子路径下）
+PUBLIC_BASE = os.environ.get("EVE_SKILL_PLAN_URL",
+                             "https://eve-tools.xyz/eveskillplanner").rstrip("/")
 
-PORT = int(os.environ.get("EVE_SKILL_PLAN_PORT") or 8091)
+# 端口 8091 归 pyfa-web（/AssemblyPlanning/），本站用 8092（nginx 的 /eveskillplanner/ 反代到这里）
+PORT = int(os.environ.get("EVE_SKILL_PLAN_PORT") or 8092)
 
 # SSO 登录会话：签名 Cookie 标识「当前登录角色」（保存/读取计划的隔离依据）。
 # 密钥优先级：环境变量 EVE_SKILL_PLAN_SECRET → data/.session_secret（持久化，重启不失效）。

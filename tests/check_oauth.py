@@ -2,7 +2,7 @@
 """OAuth 预检：在不点「登录」的前提下判断凭据 / 回调地址是否接得通。
 
 用法：python3 tests/check_oauth.py
-（可用 EVE_SKILL_PLAN_BASE 指定站点入口，默认 http://127.0.0.1/skills）
+（可用 EVE_SKILL_PLAN_BASE 指定站点入口，默认 http://127.0.0.1/eveskillplanner）
 
 做三件事：
 1. 打印 config.json（或环境变量）实际生效的 client_id 与 callback_url（secret 打码）
@@ -26,7 +26,7 @@ import requests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config  # noqa: E402
 
-BASE = (os.environ.get("EVE_SKILL_PLAN_BASE") or "http://127.0.0.1/skills").rstrip("/")
+BASE = (os.environ.get("EVE_SKILL_PLAN_BASE") or "http://127.0.0.1/eveskillplanner").rstrip("/")
 TOKEN_URL = config.TOKEN_URL
 
 

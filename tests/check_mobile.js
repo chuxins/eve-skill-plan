@@ -7,7 +7,7 @@
  *   3) 再把 iframe 拉到 1280×800：三栏回来、底部导航隐藏；缩回手机宽度后单栏回来且
  *      仍能自动跳详情（说明 resize 监听把 isMobile 更新对了）。
  * 用法：node tests/check_mobile.js
- *       BASE=http://127.0.0.1/skills/ node tests/check_mobile.js      # 走 nginx
+ *       BASE=http://127.0.0.1/eveskillplanner/ node tests/check_mobile.js   # 走 nginx
  *       CHROME_BIN=/usr/bin/chromium node tests/check_mobile.js
  * 退出码：0 通过（含「跳过」）/ 1 有断言失败
  */
@@ -17,8 +17,8 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const BASE = (process.env.BASE || process.env.EVE_SKILL_PLAN_BASE || 'http://127.0.0.1:8091/');
-const APP_PATH = new URL(BASE).pathname || '/';      // 站点部署前缀，例如 / 或 /skills/
+const BASE = (process.env.BASE || process.env.EVE_SKILL_PLAN_BASE || 'http://127.0.0.1:8092/');
+const APP_PATH = new URL(BASE).pathname || '/';      // 站点部署前缀，例如 / 或 /eveskillplanner/
 const CHROME_WINDOW = process.env.WINDOW_SIZE || '1200,1000';
 const VTIME = process.env.VTIME || '60000';          // 无头 Chrome 的虚拟时间预算（毫秒）
 

@@ -1,7 +1,7 @@
 """EVE SSO（PKCE）：发起授权 → 回调换 token → 写入共享 token 目录。
 
 与 /root/eve-skill-planner 的 oauth.py 同一套流程与 token 文件格式，
-差别只在 scope（本站只读技能/队列）与回调地址（/skills/oauth/callback）。
+差别只在 scope（本站只读技能/队列）与回调地址（/eveskillplanner/oauth/callback）。
 """
 
 import base64
