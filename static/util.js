@@ -7,8 +7,8 @@
  *   （见 app.js 末尾的 globalProperties 一段）：Vue 的模板渲染代理 has() 只放行
  *   Infinity/Math/Date/JSON 等白名单全局，其余自由标识符会被当成实例属性取成
  *   undefined → 调用即 TypeError: xxx is not a function
- * 路径一律用相对路径（api/…、static/…）：本站挂在 nginx 的 /skills/ 子路径下，
- * nginx 会把前缀剥掉再转给 Flask，浏览器侧则靠相对路径自然带上 /skills/。
+ * 路径一律用相对路径（api/…、static/…）：本站挂在 nginx 的 /eveskillplanner/ 子路径下，
+ * nginx 会把前缀剥掉再转给 Flask，浏览器侧则靠相对路径自然带上 /eveskillplanner/。
  */
 
 const API = (p, o) => fetch(p, o).then(async r => {
@@ -90,4 +90,49 @@ function fmtWhen2(iso) {
   if (isNaN(t)) return '—';
   const d = new Date(t), p = x => String(x).padStart(2, '0');
   return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/* ---------- 北京时间（固定 UTC+8，与浏览器所在时区无关） ----------
+ * 站点和用户都在同一台机器上（CST=UTC+8），但浏览器有可能被设成别的时区，
+ * 训练时间点必须统一口径，所以这里不用 Date 的本地方法：
+ * 一律「UTC 毫秒 + 8 小时」，再按 getUTC* 字段读，得到的就是北京时间。 */
+function _bjAt(ms) { return new Date(ms + 8 * 3600 * 1000); }
+function _pad2(x) { return String(x).padStart(2, '0'); }
+/* 「从现在起 n 秒」→ 北京时间「MM-DD HH:mm」 */
+function fmtBJ(seconds) {
+  if (seconds == null || isNaN(seconds)) return '—';
+  const d = _bjAt(Date.now() + Number(seconds) * 1000);
+  return `${_pad2(d.getUTCMonth() + 1)}-${_pad2(d.getUTCDate())} ${_pad2(d.getUTCHours())}:${_pad2(d.getUTCMinutes())}`;
+}
+/* 「从现在起 n 秒」→ 北京时间「YYYY-MM-DD HH:mm」（悬停时给完整日期） */
+function fmtBJFull(seconds) {
+  if (seconds == null || isNaN(seconds)) return '—';
+  const d = _bjAt(Date.now() + Number(seconds) * 1000);
+  return `${d.getUTCFullYear()}-${_pad2(d.getUTCMonth() + 1)}-${_pad2(d.getUTCDate())} `
+    + `${_pad2(d.getUTCHours())}:${_pad2(d.getUTCMinutes())}`;
+}
+/* 绝对 ISO 时间（ESI 的 finish_date / start_date）→ 北京时间「MM-DD HH:mm」 */
+function fmtBJAt(iso) {
+  const t = Date.parse(iso);
+  if (isNaN(t)) return '—';
+  const d = _bjAt(t);
+  return `${_pad2(d.getUTCMonth() + 1)}-${_pad2(d.getUTCDate())} ${_pad2(d.getUTCHours())}:${_pad2(d.getUTCMinutes())}`;
+}
+
+/* ---------- 训练时长本地估算（与 engine/training.py 同口径） ----------
+ * 只用于「当前训练队列」的即时复算：改属性时不必等后端，前端就能算出新的时间点。
+ * 计划表（/api/plan）的时长仍以后端返回为准。 */
+/* 升到 level 级的累计技能点：250 × rank × 2^(2.5·level − 2.5) */
+function spToLevel(rank, level) {
+  const lv = Math.round(level || 0);
+  if (lv <= 0) return 0;
+  return 250 * (Number(rank) || 1) * Math.pow(2, 2.5 * lv - 2.5);
+}
+/* from → to 级所需秒数；训练速率 = 主属性 + 副属性 / 2（SP/分钟），缺项按 17 点 */
+function trainSeconds(rank, primary, secondary, attrs, fromLevel, toLevel) {
+  const a = attrs || {};
+  const p = Number(a[primary]) || 17, s = Number(a[secondary]) || 17;
+  const rate = p + s / 2;
+  if (rate <= 0) return 0;
+  return Math.max(0, spToLevel(rank, toLevel) - spToLevel(rank, fromLevel)) / rate * 60;
 }

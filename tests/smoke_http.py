@@ -1,25 +1,32 @@
-"""HTTP 冒烟测试：经 nginx（/skills/ 前缀）→ Flask(:8091) 逐条断言接口行为。
+"""HTTP 冒烟测试：经 nginx（https://eve-tools.xyz/eveskillplanner/）→ Flask(:8092) 逐条断言接口行为。
 
 用法：
     cd /root/eve-skill-plan && python3 tests/smoke_http.py
-    EVE_SKILL_PLAN_BASE=http://127.0.0.1:8091 python3 tests/smoke_http.py   # 直连后端
-依赖：后端已启动（systemd eve-skill-plan.service）、nginx 已挂 /skills/。
+    EVE_SKILL_PLAN_BASE=http://127.0.0.1:8092 python3 tests/smoke_http.py   # 直连后端
+依赖：后端已启动（systemd eve-skill-plan.service）、nginx 已挂 /eveskillplanner/。
+注意 nginx 侧：站点只在 **443**（https://eve-tools.xyz/…）服务，80 端口仅保留 ACME 校验，
+其余请求一律 301 到 https —— 所以本测试默认打 https 入口；raw_call 会自己连 443 并带 SNI。
 token 目录里没有角色也能跑：角色相关断言会自动跳过（没走过 SSO 时属正常）。
 （没有角色时「角色 / SSO」一节会自动降级为只测空列表）。
 """
 import json
 import os
 import re
+import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
-BASE = os.environ.get("EVE_SKILL_PLAN_BASE", "http://127.0.0.1/skills").rstrip("/")
-PORT = int(os.environ.get("EVE_SKILL_PLAN_PORT", "8091"))
-NGINX_PORT = urllib.parse.urlsplit(BASE).port or 80   # raw_call 默认打 nginx 端口
-# BASE 带路径前缀（如 /skills）说明测的是 nginx 反代入口；直连后端时跳过 nginx 专有断言
-PREFIX = urllib.parse.urlsplit(BASE).path.rstrip("/")
+BASE = os.environ.get("EVE_SKILL_PLAN_BASE", "https://eve-tools.xyz/eveskillplanner").rstrip("/")
+PORT = int(os.environ.get("EVE_SKILL_PLAN_PORT", "8092"))          # Flask 直连端口
+_parts = urllib.parse.urlsplit(BASE)
+USE_TLS = _parts.scheme == "https"
+NGINX_PORT = _parts.port or (443 if USE_TLS else 80)   # raw_call 默认连 nginx 的端口
+NGINX_SNI = _parts.hostname if USE_TLS else None       # 证书按域名签发，TLS 握手必须带 SNI
+# BASE 带路径前缀（如 /eveskillplanner）说明测的是 nginx 反代入口；直连后端时跳过 nginx 专有断言
+PREFIX = _parts.path.rstrip("/")
 IS_NGINX = bool(PREFIX)
 CHAR_ID = int(os.environ.get("EVE_SKILL_PLAN_CHAR", "2124544250"))   # token 目录里的测试角色
 passed, failed = 0, []
@@ -49,11 +56,17 @@ def call(method, path, body=None, raw=False, base=BASE):
         return e.code, json.loads(e.read().decode() or "{}")
 
 
-def raw_call(path_bytes, port=None):
-    """直接发原始字节请求（模拟 curl/browser 不转义 UTF-8 的场景）。"""
+def raw_call(path_bytes, port=None, tls=None, sni=None):
+    """直接发原始字节请求（模拟 curl/browser 不转义 UTF-8 的场景）。
+
+    走 nginx 时连接 127.0.0.1:443 并带 SNI（证书按 eve-tools.xyz 签发，域名与证书必须匹配）；
+    直连后端时（port=PORT）是明文 HTTP。"""
     import socket
     port = port or NGINX_PORT
+    tls = USE_TLS if tls is None else tls
     sk = socket.create_connection(("127.0.0.1", port), timeout=30)
+    if tls:
+        sk = ssl.create_default_context().wrap_socket(sk, server_hostname=sni or NGINX_SNI)
     sk.sendall(b"GET " + path_bytes + b" HTTP/1.1\r\nHost: 127.0.0.1\r\n"
                b"Accept: application/json\r\nConnection: close\r\n\r\n")
     chunks = []
@@ -106,11 +119,11 @@ ok(re.search(r"\{\{\s*[A-Z_]+\s*\}\}", html) is None, "后端占位符（{{ASSET
 ok(html.count("{{") > 20, "Vue 插值原样保留", html.count("{{"))
 ok("?v=" in html, "静态资源带版本号")
 st, body = call("GET", "/static/index.html", raw=True)
-ok(st == 200 and b'id="app"' in body, "GET /skills/static/index.html → 200", st)
+ok(st == 200 and b'id="app"' in body, "GET /eveskillplanner/static/index.html → 200", st)
 
 print("== 元数据 / 技能库")
 st, meta = call("GET", "/api/meta")
-ok(st == 200 and meta["counts"]["skills"] == 511 and meta["counts"]["careers"] == 40, "api/meta 计数",
+ok(st == 200 and meta["counts"]["skills"] == 512 and meta["counts"]["careers"] == 40, "api/meta 计数",
    meta.get("counts"))
 st, groups = call("GET", "/api/skillgroups")
 ok(st == 200 and len(groups["groups"]) == 24, "api/skillgroups 24 组", len(groups.get("groups", [])))
@@ -127,9 +140,11 @@ _st, _body = raw_call(PREFIX.encode() + b"/api/skills?q=" + "无人机".encode("
 ok(_st.startswith("HTTP/1.1 400") and b"Bad request syntax" in _body,
    "裸 UTF-8 含 0xA0 字节 → backend 请求行被拆成 4 段 → 400（前端必须 encodeURIComponent）", _st)
 if IS_NGINX:
+    # 未挂到本站代理前缀的路径由 nginx 自己应答：/api/ 现在是 308 转给别的应用，
+    # 需要 nginx 规范化 URI 的路径会直接 400 —— 无论哪种，原始 UTF-8 都进不到 Flask。
     _st, _body = raw_call(b"/api/skills?q=" + "乌鸦".encode("utf-8"))
-    ok(_st.startswith("HTTP/1.1 400") and b"Invalid HTTP request" in _body,
-       "未挂代理的 /api/ 裸 UTF-8 → nginx 直接 400 Invalid HTTP request", _st)
+    ok(not _st.startswith("HTTP/1.1 200") and b'"query"' not in _body,
+       "未挂代理的 /api/ 裸 UTF-8 → nginx 自己应答（308 跳转 / 400 拒绝），不进 Flask", _st)
 
 # _q() 容错：nginx/Werkzeug 按 iso-8859-1 解码请求行后中文会变 latin-1 乱码，
 # 视图里用 _q() 把乱码还原回 UTF-8（走真实视图函数，不经过网络层）
@@ -169,13 +184,13 @@ ok(all(r["name"] for r in d["requirements"]), "需求项带技能名")
 # 裸 UTF-8 请求行（curl 不转义时）在 http.server 里的真实行为：
 # 请求行按 iso-8859-1 解码后 split()，若字节流里含 0xA0（latin-1 的 NBSP 被当作空白）
 # 会拆出 4 个词 → 400；不含 0xA0 时能进视图，由 _q() 还原 UTF-8。
-_st, _body = raw_call(b"/api/skills?q=" + "乌鸦".encode("utf-8") + b"&limit=2", port=PORT)
+_st, _body = raw_call(b"/api/skills?q=" + "乌鸦".encode("utf-8") + b"&limit=2", port=PORT, tls=False)
 _qd = json.loads(_body.decode())
 ok(_st.startswith("HTTP/1.1 200") and _qd["query"] == "乌鸦",
-   "直连 8091 裸 UTF-8（字节里无 0xA0）→ _q() 还原查询词", _qd.get("query"))
-_st, _body = raw_call(b"/api/skills?q=" + "无人机".encode("utf-8") + b"&limit=2", port=PORT)
+   "直连 :8092 裸 UTF-8（字节里无 0xA0）→ _q() 还原查询词", _qd.get("query"))
+_st, _body = raw_call(b"/api/skills?q=" + "无人机".encode("utf-8") + b"&limit=2", port=PORT, tls=False)
 ok(_st.startswith("HTTP/1.1 400") and b"Bad request syntax" in _body,
-   "直连 8091 裸 UTF-8 含 0xA0 → dev server 判为坏请求行（故前端必须 encodeURIComponent）", _st)
+   "直连 :8092 裸 UTF-8 含 0xA0 → dev server 判为坏请求行（故前端必须 encodeURIComponent）", _st)
 
 print("== 职业路线")
 st, d = call("GET", "/api/careers")
@@ -360,6 +375,23 @@ if os.path.exists(os.path.join(_cfg.TOKEN_DIR, f"{CHAR_ID}.json")):
        and jd.get("total_sp", 0) > 1e6,
        "登录后可读真实角色的技能 / SP / 属性 / 队列",
        [jd.get("name"), len(jd.get("skills", {})), jd.get("total_sp")])
+    # 队列项必须带 rank + 主/副属性：前端才能按「当前属性」即时复算时间点（ESI 时间只作兜底）
+    _q = jd.get("queue") or []
+    ok(all(q.get("rank") and q.get("primary") and q.get("secondary") and q.get("skill_name")
+           for q in _q),
+       "队列项带 rank / 主副属性 / 技能名（前端按当前属性复算用）",
+       [(x.get("skill_id"), x.get("primary"), x.get("secondary")) for x in _q[:2]] + [f"n={len(_q)}"])
+    # 时间口径：前端要区分「正在训练（按 ESI 剩余时间）/ 排队（整级时长）」，因此必须原样透传
+    # start_date / finish_date 与 ESI 的 SP 明细（训练中那级用 training_start_sp→level_end_sp 反推速率）
+    ok(all(q.get("start_date") and q.get("finish_date") and q.get("level_end_sp") is not None
+           and q.get("level_start_sp") is not None and q.get("training_start_sp") is not None
+           for q in _q),
+       "队列项带 start/finish 与 SP 明细 start/end/training_start_sp（前端算剩余时间用）",
+       [(x.get("skill_id"), x.get("start_date"), x.get("level_start_sp"), x.get("training_start_sp"),
+         x.get("level_end_sp")) for x in _q[:2]] + [f"n={len(_q)}"])
+    _training = [q for q in _q if (q.get("start_date") or "") <= time.strftime("%Y-%m-%dT%H:%M:%SZ",
+                                                                               time.gmtime())]
+    ok(len(_training) <= 1, "队列里最多只有 1 项处于「正在训练」（start_date 已到）", len(_training))
     r = client.post("/api/plan", json={"targets": targets, "character_id": CHAR_ID})
     jd = r.get_json()
     ok(r.status_code == 200 and jd.get("character_id") == CHAR_ID,

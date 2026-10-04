@@ -53,11 +53,21 @@ main{display:grid;grid-template-columns:var(--lw,330px) minmax(0,1fr) var(--rw,3
 .lvl{font-size:13.5px;color:var(--m);border:1px solid var(--b);border-radius:3px;padding:0 4px}
 .lvl.ok{color:var(--g);border-color:#2f5c3c}
 .lvl.no{color:var(--r);border-color:#5c3034}
+/* 技能详情：等级按钮三态 —— 已学=黑底（不可点）/ 队列中=蓝底（不可点，提示「正在训练队列中」）/ 未学=可点 */
+.lvbtn{cursor:pointer}
+.lvbtn.learned{background:#000;border-color:#3a3f47;color:#5f656f}
+.lvbtn.training{background:#1c3a63;border-color:#33619e;color:#a6c6ff}
+.lvbtn:disabled{cursor:not-allowed;opacity:1}
+.attr-in input:disabled{opacity:.45;cursor:not-allowed}
+/* 训练队列：每项标「训练中」（按 ESI 剩余时间算）/「排队」（按整级时长算） */
+.qtag{font-size:11px;line-height:1.4;border:1px solid var(--b);border-radius:3px;padding:0 4px;color:var(--m);margin-right:4px;white-space:nowrap}
+.qtag.on{background:#1c3a63;border-color:#33619e;color:#a6c6ff}
 h3.sec{font-size:16px;margin:2px 0 8px;color:#fff;font-weight:600}
 .card{background:var(--p);border:1px solid var(--b);border-radius:6px;padding:9px;margin-bottom:9px}
 .row{display:flex;align-items:center;gap:7px;padding:2px 0}
 .row.wrap{flex-wrap:wrap}
-.kv{display:flex;justify-content:space-between;padding:1px 0;border-bottom:1px dotted var(--b);font-size:15.5px}
+.kv{display:flex;justify-content:space-between;flex-wrap:wrap;gap:0 8px;padding:1px 0;border-bottom:1px dotted var(--b);font-size:15.5px}
+.kv>*:last-child{margin-left:auto;text-align:right}
 .kv .k{color:var(--m)}
 table{width:100%;border-collapse:collapse;font-size:14.5px}
 td,th{padding:2px 5px;border:1px solid var(--b);text-align:right;white-space:nowrap}
@@ -271,7 +281,10 @@ tr.done td{color:var(--m)}
               <span class="tag">{{skill.skill.primary_name}} / {{skill.skill.secondary_name}}</span>
               <span class="tag" v-if="cid">当前 {{skill.current}} 级（{{lvRoman(skill.current)}}）</span>
               <span style="flex:1"></span>
-              <button class="sm" v-for="lv in levels" :key="lv" @click="addSkillTarget(skill.skill,lv)">+{{lvRoman(lv)}}</button>
+              <button class="sm lvbtn" v-for="lv in levels" :key="lv"
+                      :class="{learned: skillLvState(lv)==='learned', training: skillLvState(lv)==='training'}"
+                      :disabled="skillLvState(lv)!=='open'" :title="skillLvTitle(lv)"
+                      @click="addSkillTarget(skill.skill, lv)">+{{lvRoman(lv)}}</button>
             </div>
             <p class="small m" v-if="skill.skill.description" style="margin-top:6px;white-space:pre-wrap">{{skill.skill.description}}</p>
           </div>
@@ -423,7 +436,7 @@ tr.done td{color:var(--m)}
               <button class="sm" @click="savePlan()">保存计划</button>
             </div>
             <div class="small m" style="margin-top:5px">
-              {{summary.rate_note}}；训练完成预计 {{fmtWhen(summary.seconds)}}（按现在开始连续训练估算）
+              {{summary.rate_note}}；训练完成预计 {{fmtBJFull(summary.seconds)}}（北京时间，按现在开始连续训练估算）
             </div>
             <div class="small y" style="margin-top:4px" v-if="plan.character_id && !Object.keys(current||{}).length">
               注意：未读到该角色技能快照，计划按「从 0 级」计算
@@ -433,9 +446,11 @@ tr.done td{color:var(--m)}
           <div class="card">
             <h3 class="sec">目标（{{plan.targets.length}}）</h3>
             <div class="row wrap">
-              <span class="tag" v-for="t in plan.targets" :key="t.kind+'-'+t.tid">
+              <span class="tag" v-for="t in targetsView" :key="t.kind+'-'+t.tid">
                 {{kindCN(t.kind)}} · {{t.name}}<span v-if="t.level"> {{lvRoman(t.level)}}级</span>
-                · {{t.skills}} 项技能 · {{fmtDur(t.seconds)}}
+                · {{t.skills}} 项技能 · 用时 {{fmtDur(t.seconds)}} ·
+                <b class="g" v-if="t.done">已满足</b>
+                <b class="y" v-else :title="'北京时间 ' + fmtBJFull(t.end_seconds)">预计 {{t.at}} 练完</b>
               </span>
             </div>
           </div>
@@ -443,7 +458,7 @@ tr.done td{color:var(--m)}
           <div class="card">
             <h3 class="sec">待训练（{{steps.length}} 步 · {{rowsTodo.length}} 项技能，按当前排序）</h3>
             <div class="tw"><table>
-              <thead><tr><th>技能 · 等级</th><th>组</th><th>从</th><th>训练时间</th><th>SP</th><th>完成于（累计）</th><th>预计时间点</th><th></th></tr></thead>
+              <thead><tr><th>技能 · 等级</th><th>组</th><th>从</th><th>训练时间</th><th>SP</th><th>开始（北京时间）</th><th>完成于（累计）</th><th>预计完成（北京时间）</th><th></th></tr></thead>
               <tbody>
                 <tr v-for="s in steps" :key="s.tid + '-' + s.level">
                   <td class="nm"><a @click="jumpSkill(s.tid)">{{s.name}}</a> <b>{{lvRoman(s.level)}}</b></td>
@@ -451,13 +466,14 @@ tr.done td{color:var(--m)}
                   <td>{{lvRoman(s.level - 1)}}</td>
                   <td class="y">{{s.duration}}</td>
                   <td>{{n(s.sp)}}</td>
+                  <td class="m" :title="'北京时间 ' + fmtBJFull(s.start_seconds)">{{fmtBJ(s.start_seconds)}}</td>
                   <td>{{s.end_human}}</td>
-                  <td class="m" :title="fmtWhen(s.end_seconds)">{{fmtShort(s.end_seconds)}}</td>
+                  <td class="m" :title="'北京时间 ' + fmtBJFull(s.end_seconds)">{{fmtBJ(s.end_seconds)}}</td>
                   <td><span class="skill-btn" @click="addSkillTarget(s, s.required)">+</span></td>
                 </tr>
               </tbody>
             </table></div>
-            <div class="small m" style="margin-top:6px">「完成于」= 从开始训练到该步练完的累计时间（EVE 同一时间只能训练一项技能）；目标技能的前置技能会自动加入计划，并逐级单列一行</div>
+            <div class="small m" style="margin-top:6px">时间点首尾相接：第 1 步从「现在」开始，之后每一步从上一步练完的时刻开始（EVE 同一时间只能训练一项技能）；「开始 / 预计完成」为北京时间，「完成于」= 从开始训练到该步练完的累计时长。目标技能的前置技能会自动加入计划，并逐级单列一行</div>
           </div>
 
           <div class="card" v-if="rowsDone.length">
@@ -501,20 +517,38 @@ tr.done td{color:var(--m)}
           <h3 class="sec" style="margin-bottom:6px">有效属性（含植入体）</h3>
           <div class="attr-in" v-for="k in attrKeys" :key="k">
             <span class="small m">{{attrName(k)}}</span>
-            <input type="number" min="1" max="99" v-model.number="attrs[k]" @change="recalc()">
+            <input type="number" min="1" max="99" v-model.number="attrs[k]" :disabled="!canEditAttrs" @change="recalc()">
           </div>
           <div class="row wrap" style="margin-top:5px" v-if="meta">
-            <button class="sm" v-for="p in meta.attribute_presets" :key="p.key"
+            <button class="sm" v-for="p in meta.attribute_presets" :key="p.key" :disabled="!canEditAttrs"
                     @click="applyPreset(p)" :title="p.name">{{p.key==='default'?'默认17':(p.key==='balanced'?'常见27/21':'满配全27')}}</button>
           </div>
-          <div class="small m" style="margin-top:5px">训练速率 = 主属性 + 副属性 / 2（SP/分钟），改属性后计划会立即复算</div>
+          <div class="small m" style="margin-top:5px">
+            {{canEditAttrs
+              ? '已登录：按角色属性（含植入体）计算，可手动微调 —— 改属性后训练计划与当前训练队列的时间点立即复算；点「重读技能」恢复角色真实属性。'
+              : '未登录：按默认 17 点计算（属性框与预设不可改）；登录后自动改用角色真实属性。'}}
+            训练速率 = 主属性 + 副属性 / 2（SP/分钟）。
+          </div>
         </div>
 
-        <div class="card" v-if="queue && queue.length">
-          <h3 class="sec" style="margin-bottom:6px">当前训练队列（{{queue.length}}）</h3>
-          <div class="kv" v-for="q in queue.slice(0,12)" :key="q.queue_position">
-            <span class="k">{{q.skill_name || q.skill_id}} · {{toLevel(q.finished_level)}}</span>
-            <span :class="(remain(q.finish_date)||0)<=0?'m':'y'">{{q.finish_date?fmtWhen2(q.finish_date):'—'}}</span>
+        <div class="card" v-if="queueView.length">
+          <h3 class="sec" style="margin-bottom:6px">当前训练队列（{{queueView.length}}）</h3>
+          <div class="kv" v-for="q in queueView.slice(0,12)" :key="q.queue_position">
+            <span class="k">
+              <span class="qtag" :class="q.training ? 'on' : ''">{{q.training ? '训练中' : '排队'}}</span>
+              {{q.skill_name || q.skill_id}} · {{toLevel(q.finished_level)}}
+            </span>
+            <span :class="q.end_seconds>0?'y':'m'"
+                  :title="(q.training ? '正在训练：按 ESI 剩余时间折算（只算没练掉的 SP）' : '排队整级：按当前属性算整级时长')
+                    + '；完成于 ' + fmtBJFull(q.end_seconds) + '｜ESI 完成 ' + q.esi_at
+                    + (q.left_seconds > 0 ? '（ESI 剩余 ' + fmtDur(q.left_seconds) + '）' : '')">
+              {{q.end_seconds > 0 ? fmtDur(q.end_seconds) + '后' : '即将完成'}} · {{q.at}}
+            </span>
+          </div>
+          <div class="small m" style="margin-top:5px">
+            第 1 项从「现在」起算，之后每项接上一项练完的时刻（EVE 同一时间只能训练一项）。<b>训练中</b>的那一级按 ESI 的
+            <b>剩余</b>时间算（只折算还没练掉的那部分 SP，不是整级总时长），<b>排队</b>的整级按当前属性算整级时长；改属性立即复算，
+            点「重读技能」用角色真实属性复位。时间点一律北京时间。
           </div>
         </div>
 

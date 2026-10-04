@@ -1,7 +1,7 @@
 /* Vue 主应用（模板写在 index.html 的 #app 里，本文件只有状态机与请求逻辑）
  * 页面分四个主标签「技能库 / 需求查询 / 职业路线 / 计划」，右侧常驻「角色与属性」面板：
  * 角色 + 属性 → 决定所有页签里的「当前等级 / 训练时长 / 缺口」。
- * 所有请求都走相对路径，便于在 nginx 的 /skills/ 子路径下部署。
+ * 所有请求都走相对路径，便于在 nginx 的 /eveskillplanner/ 子路径下部署。
  */
 const { createApp } = Vue;
 
@@ -38,6 +38,21 @@ const app = createApp({
     rowsTodo() { return this.rows.filter(r => !r.ok); },
     rowsDone() { return this.rows.filter(r => r.ok); },
     summary() { return this.plan ? this.plan.summary : null; },
+    /* 目标卡片：每个目标的「练完时间」= 该目标名下最晚的那个累计完成时间点（时间轴从「现在」
+     * 起算、各步首尾相接）。include_owned=false 时已满足的技能不在 rows 里 —— 若一个目标名下
+     * 没有任何待练行，说明它已满足（done=true）。共享的前置技能会被多个目标算进去，
+     * 因此越靠后的目标练完时间越晚（与计划表逐级累计一致）。 */
+    targetsView() {
+      const rows = this.rows || [];
+      return (this.plan ? (this.plan.targets || []) : []).map(t => {
+        const mine = rows.filter(r => (r.targets || []).includes(t.tid));
+        const end_seconds = mine.length ? Math.max.apply(null, mine.map(r => Number(r.end_seconds) || 0)) : 0;
+        return Object.assign({}, t, {
+          end_seconds, at: fmtBJ(end_seconds),
+          done: !mine.length || mine.every(r => r.ok),
+        });
+      });
+    },
     charName() { return this.cname || (this.cid ? String(this.cid) : '未选角色'); },
     attrsText() {
       const eff = this.summary ? this.summary.attributes : this.attrs;
@@ -45,6 +60,32 @@ const app = createApp({
     },
     // 当前是否处于 SSO 登录状态（服务端会话里有登录角色 → 计划才能保存 / 可见）
     loggedIn() { return !!this.loginCid; },
+    // 属性只来自角色：未登录固定按默认 17 点算（后端 normalize_attrs 同口径），
+    // 因此未登录时属性框与预设都不可改；登录后可手动微调（改完立即复算）。
+    canEditAttrs() { return this.loggedIn; },
+    /* 当前训练队列：按「当前属性」本地复算「剩余/整级」用时与完成时间点。
+     * 第 1 项从「现在」起算，之后每项接上一项练完的时刻（EVE 同一时间只能训练一项 →
+     * 时间点首尾相接）；正在训练的那一级按 ESI 的「剩余」时间算，排队的按整级时长。
+     * 属性一改（登录后手改 / applyPreset）这里立刻跟着变；点「重读技能」→
+     * pickChar 把属性复位成角色真实属性 → 队列时间随之复位。 */
+    queueView() {
+      const q = this.queue || [];
+      const now = Date.now();
+      let acc = 0;
+      return q.slice()
+        .sort((a, b) => (Number(a.queue_position) || 0) - (Number(b.queue_position) || 0))
+        .map(it => {
+          const sta = Date.parse(it.start_date || '');
+          const seconds = this.queueItemSeconds(it, this.attrs, now);
+          acc += seconds;                                  // 同一时间只能训练一项 → 累计
+          return Object.assign({}, it, {
+            training: !isNaN(sta) && sta <= now,           // ESI 已开始这一级 = 正在训练
+            seconds, end_seconds: acc, at: fmtBJ(acc),
+            left_seconds: remain(it.finish_date),          // ESI 口径的剩余（悬停对照用）
+            esi_at: fmtBJAt(it.finish_date),
+          });
+        });
+    },
   },
   methods: {
     // ---------------------------------------------------------- 基础
@@ -138,7 +179,11 @@ const app = createApp({
         const d = await API(`api/characters/${this.cid}/overview`);
         this.cname = d.name;
         this.current = d.skills || {};
-        if (d.attributes) this.attrs = Object.assign({}, this.attrs, d.attributes);
+        // 属性一律以角色为准（读不到的项退回默认 17）：这样「重读技能」会把
+        // 手动改过的属性复位成角色真实属性，训练队列的时间点也随之复位。
+        this.attrs = Object.assign(
+          { charisma: 17, intelligence: 17, memory: 17, perception: 17, willpower: 17 },
+          d.attributes || {});
         this.queue = d.queue || null;
         this.totalSp = d.total_sp != null ? d.total_sp : null;
         if (d.skills_error) this.err = d.skills_error;
@@ -169,6 +214,65 @@ const app = createApp({
       } catch (e) { this.err = e.message; }
     },
     applyPreset(p) { this.attrs = Object.assign({}, this.attrs, p.attrs); this.recalc(); },
+    /* 队列里「正在训练 / 最先排队」的那一级（技能详情用它把该级标蓝） */
+    queueLevel(tid) {
+      const q = (this.queue || []).filter(x => String(x.skill_id) === String(tid));
+      if (!q.length) return 0;
+      q.sort((a, b) => (Number(a.queue_position) || 0) - (Number(b.queue_position) || 0));
+      return Number(q[0].finished_level) || 0;
+    },
+    /* 训练速率 = 主属性 + 副属性 / 2（SP/分钟）；缺项按默认 17（与后端 normalize_attrs 同口径） */
+    attrRate(it, attrs) {
+      const a = attrs || {};
+      return (Number(a[it.primary]) || 17) + (Number(a[it.secondary]) || 17) / 2;
+    },
+    /* 这条队列项「这一级」涉及多少 SP：优先用 ESI 的 SP 明细，缺了才退回公式
+     *   250 × rank × 2^(2.5L − 2.5) 的逐级差（与后端 engine/training.py 同口径）。 */
+    queueItemSp(it) {
+      const endSp = Number(it.level_end_sp), lvStartSp = Number(it.level_start_sp);
+      if (endSp > 0 && lvStartSp >= 0 && endSp > lvStartSp) return endSp - lvStartSp;
+      const toLv = Math.max(0, Number(it.finished_level) || 0);
+      return spToLevel(it.rank, toLv) - spToLevel(it.rank, Math.max(0, toLv - 1));
+    },
+    /* 单条队列项的用时（秒）——统一按「剩余」口径：
+     * - 正在训练的那一级（ESI 的 start_date 已到）：ESI 的 start_date→finish_date 就是
+     *   这一级「剩下这段」的权威用时；若 ESI 同时给了这段的 SP 明细
+     *   （training_start_sp → level_end_sp），再按 (ESI 速率 ÷ 当前速率) 折算，
+     *   这样改属性只重算「还没练掉的 SP」的用时。注意不能用整级时长 × 时间进度比例：
+     *   队列项可能是带着已练进度开训的（training_start_sp > level_start_sp），
+     *   乘以整级时长会把开训前就练掉的部分也算进去，剩余时间被严重高估。
+     * - 后面排队的整级（start_date 还没到 / 没有）：按当前属性算整级时长。
+     * - ESI 日期缺失（旧缓存 / 非 SSO）→ 退回 finish_date 剩余时间，再退回整级时长。 */
+    queueItemSeconds(it, attrs, now) {
+      const sta = Date.parse(it.start_date || ''), fin = Date.parse(it.finish_date || '');
+      const left = isNaN(fin) ? null : Math.max(0, fin - now) / 1000;   // ESI 口径的剩余
+      const rate = this.attrRate(it, attrs);                            // 当前属性下的 SP/分钟
+      if (!it.primary || !it.secondary || rate <= 0) return left == null ? 0 : left;
+      if (!isNaN(sta) && sta <= now) {                                  // 正在训练这一级
+        if (left == null) return 0;
+        const esiMin = (fin - sta) / 60000;                             // ESI 算这段用的分钟数
+        const tSp = Number(it.training_start_sp), eSp = Number(it.level_end_sp);
+        if (tSp > 0 && eSp > tSp && esiMin > 0)
+          return left * ((eSp - tSp) / esiMin) / rate;                  // 剩余 SP ÷ 当前速率
+        return left;
+      }
+      const sp = this.queueItemSp(it);                                  // 还没轮到 → 整级
+      return sp > 0 ? sp / rate * 60 : (left == null ? 0 : left);
+    },
+    /* 技能详情里某个等级的状态：
+     * learned（已学：变黑且不可加入计划）/ training（正在训练队列中：标蓝）/ open（未学：可加入计划） */
+    skillLvState(lv) {
+      const cur = (this.skill && this.skill.current) || 0;
+      if (lv <= cur) return 'learned';
+      const tid = (this.skill && this.skill.skill && this.skill.skill.tid) || 0;
+      return this.queueLevel(tid) === lv ? 'training' : 'open';
+    },
+    skillLvTitle(lv) {
+      const st = this.skillLvState(lv);
+      if (st === 'learned') return '已经学会 ' + lvRoman(lv) + ' 级，不能再加入训练计划';
+      if (st === 'training') return '正在训练队列中';
+      return '把 ' + lvRoman(lv) + ' 级加入训练计划';
+    },
     // ---------------------------------------------------------- 技能库
     async loadGroups() {
       try { this.groups = (await API('api/skillgroups')).groups; } catch (e) { this.err = e.message; }
@@ -330,6 +434,7 @@ const app = createApp({
  * 以后新增/删除模板函数时，tests/check_template.js 的「模板函数发布检查」会拦住。 */
 Object.assign(app.config.globalProperties, {
   n, fmtDur, fmtShort, remain, fmtWhen, fmtWhen2,   // 数值 / 时长 / 时间
+  fmtBJ, fmtBJFull, fmtBJAt,                        // 北京时间（计划时间点 / 训练队列）
   attrName, kindCN, lvRoman, toLevel,               // 文案
   icon, render64, isShip,                           // 图标 / 分类
 });

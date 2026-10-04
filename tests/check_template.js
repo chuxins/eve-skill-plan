@@ -12,6 +12,7 @@
  * 用法：node tests/check_template.js
  * 退出码：1 模板编译失败 / 2 标识符缺失 / 3 vendor 缺编译器 / 4 找不到 #app
  *        5 util.js 函数没挂到实例 / 6 渲染冒烟失败 / 7 移动端适配审计失败
+ *        8 技能详情等级三态 / 北京时间展示审计失败
  */
 const fs = require('fs');
 const path = require('path');
@@ -311,7 +312,13 @@ Object.assign(inst, {
   cid: 12345, cname: '测试角色',
   current: { 3300: 3, 3301: 4 },
   totalSp: 12345678,
-  queue: [{ queue_position: 0, skill_id: 3300, skill_name: '加达里战列舰', skill_name_en: 'Caldari Battleship', finished_level: 4, finish_date: '2026-09-29T10:00:00Z' }],
+  /* 队列：正在训练那一级（start_date 已到 + 带 ESI 的 SP 明细）→ 渲染「训练中」标签，
+   * 时间点按 ESI 剩余时间折算；日期用相对时间，保证任何一天跑都是「训练中」。 */
+  queue: [{ queue_position: 0, skill_id: 3300, skill_name: '加达里战列舰', skill_name_en: 'Caldari Battleship',
+            finished_level: 4, rank: 8, primary: 'perception', secondary: 'willpower',
+            level_start_sp: 16000, training_start_sp: 20000, level_end_sp: 45255,
+            start_date: new Date(Date.now() - 3600e3).toISOString(),
+            finish_date: new Date(Date.now() + 2 * 3600e3).toISOString() }],
   groups: [{ id: 1, name: '舰船指挥', skills: [3300, 3301] }],
   skills: [{ tid: 3300, name: '加达里战列舰', rank: 8 }],
   careers: [{ plan_id: 'caldari_wealth', name: '加达里财富猎手', name_en: 'Caldari Wealth Hunter', skills: 2 }],
@@ -321,7 +328,8 @@ Object.assign(inst, {
 });
 renderState('boot 之后（角色 + 属性 + 队列 + 已登录）',
   ['技能 520 · 类型 30000 · 职业路线 40', '测试角色', '总技能点', '12.3M', '已学技能',
-   '魅力', '智力', '记忆', '感知', '毅力', '当前训练队列（1）', '加达里战列舰', '到 Ⅳ 级', TIME,
+   '魅力', '智力', '记忆', '感知', '毅力', '当前训练队列（1）', '加达里战列舰', '到 Ⅳ 级',
+   '训练中', '排队', TIME,
    '最近保存', '乌鸦级计划', 'SSO：已登录', 'SSO 登录']);
 
 /* 技能库页签 + 技能详情 */
@@ -371,17 +379,20 @@ inst.plan = {
   name: '测试计划', character_id: 12345,
   targets: [{ kind: 'type', tid: 638, name: '乌鸦级', level: null, skills: 2, seconds: 90061 }],
   rows: [
-    { tid: 3300, name: '加达里战列舰', group: '舰船指挥', required: 5, current: 3,
+    { tid: 3300, name: '加达里战列舰', group: '舰船指挥', required: 5, current: 3, targets: [638],
       levels: [{ level: 4 }, { level: 5 }], duration: '1天4小时', sp: 25000,
-      end_human: '1天4小时', end_seconds: 90061, seconds: 90061, ok: false },
-    { tid: 3301, name: '加达里巡洋舰', group: '舰船指挥', required: 4, current: 4,
-      levels: [], duration: '—', sp: 0, end_human: '—', end_seconds: 0, seconds: 0, ok: true },
+      start_seconds: 0, end_human: '1天4小时', end_seconds: 90061, seconds: 90061, ok: false },
+    { tid: 3301, name: '加达里巡洋舰', group: '舰船指挥', required: 4, current: 4, targets: [638],
+      levels: [], duration: '—', sp: 0, start_seconds: 90061, end_human: '—', end_seconds: 90061,
+      seconds: 0, ok: true },
   ],
   steps: [
     { tid: 3300, name: '加达里战列舰', group: '舰船指挥', required: 5, current: 3, level: 4,
-      duration: '12小时', sp: 12000, end_human: '12小时', end_seconds: 43200, seconds: 43200, ok: false },
+      duration: '12小时', sp: 12000, start_seconds: 0, end_human: '12小时', end_seconds: 43200,
+      seconds: 43200, ok: false },
     { tid: 3300, name: '加达里战列舰', group: '舰船指挥', required: 5, current: 3, level: 5,
-      duration: '16小时', sp: 13000, end_human: '1天4小时', end_seconds: 90061, seconds: 46861, ok: false },
+      duration: '16小时', sp: 13000, start_seconds: 43200, end_human: '1天4小时', end_seconds: 90061,
+      seconds: 46861, ok: false },
   ],
   summary: { skills_total: 2, skills_missing: 1, skills_owned: 1, steps: 2, duration: '1天4小时', sp: 1234567,
              rate_note: '训练速率 22.5 SP/分钟', seconds: 90061,
@@ -389,10 +400,60 @@ inst.plan = {
 };
 renderState('计划页签 + 复算结果',
   ['训练计划', '共 2 项技能 · 缺 1 项 · 2 步', '总时长', '1天4小时', '总 SP 1.2M', '已满足 1 项',
-   '属性 魅力 20', '需求 · 乌鸦级', '待训练（2 步 · 1 项技能', '加达里战列舰',
-   'Ⅳ', 'Ⅴ', 'Ⅲ', '12小时', '16小时', '1d1h1m1s', TIME, '已满足（1 项）']);
+   '属性 魅力 20', '需求 · 乌鸦级', '用时', '练完', '待训练（2 步 · 1 项技能', '加达里战列舰',
+   'Ⅳ', 'Ⅴ', 'Ⅲ', '12小时', '16小时', '开始（北京时间）', '预计完成（北京时间）', TIME,
+   '已满足（1 项）']);
+
+/* 未登录：属性固定默认 17，属性框 / 预设不可改（canEditAttrs=false 分支） */
+Object.assign(inst, {
+  tab: 'skills', skill: null, plan: null, queue: null,
+  loginCid: null, loginName: '', cid: null, cname: '', current: {}, totalSp: null,
+  attrs: Object.assign({}, ATTRS),
+});
+renderState('未登录（默认 17 点，属性框不可改）',
+  ['未登录：按默认 17 点计算（属性框与预设不可改）；登录后自动改用角色真实属性。',
+   '魅力', '智力', '记忆', '感知', '毅力', '登录 EVE 角色']);
 
 console.log(`渲染冒烟通过：${renders} 种状态全部渲染成功（模板函数发布 + 渲染代理语义都已覆盖）`);
+
+
+/* ---------- 6) 技能详情等级三态 + 北京时间 / 时间点口径审计 ----------
+ * 需求：已学等级变黑且不可点；队列里的那一级标蓝并提示「正在训练队列中」；
+ *       只有未学等级能加入计划；计划表 / 训练队列的时间点统一走北京时间（fmtBJ 系列）；
+ *       计划表时间点首尾相接（第 1 步从现在开始，之后接上一步完成时刻）；
+ *       训练队列「正在训练」那一级按 ESI 剩余时间算，排队的整级按整级时长；
+ *       属性框与预设只在登录后可改（未登录固定默认 17）。 */
+function need(cond, msg) {
+  if (!cond) { console.error('等级三态 / 时间口径审计失败：' + msg); process.exit(8); }
+}
+need(/class="sm lvbtn"[\s\S]*?skillLvState\(lv\)/.test(tpl), '技能详情等级按钮没有按 skillLvState 判态');
+need(/:disabled="skillLvState\(lv\)!=='open'"/.test(tpl), '已学 / 队列中的等级按钮没有置灰（应只有 open 可点）');
+need(/:title="skillLvTitle\(lv\)"/.test(tpl), '等级按钮没有挂 skillLvTitle 提示');
+need(/\.lvbtn\.learned\{[^}]*background:#000/.test(html), '已学等级没有变黑（.lvbtn.learned）');
+need(/\.lvbtn\.training\{[^}]*background:#1c3a63/.test(html), '队列中等级没有标蓝（.lvbtn.training）');
+need(appSrc.includes("'正在训练队列中'"), 'skillLvTitle 里没有「正在训练队列中」提示文案');
+need(/开始（北京时间）/.test(tpl) && /fmtBJ\(s\.start_seconds\)/.test(tpl),
+  '计划表没有「开始（北京时间）」列（时间点首尾相接：第 1 步从现在、之后接上一步完成时刻）');
+need(/预计完成（北京时间）/.test(tpl), '计划表没有「预计完成（北京时间）」列');
+need(/fmtBJ\(s\.end_seconds\)/.test(tpl), '计划表时间点没有用 fmtBJ（北京时间）');
+need(/第 1 步从「现在」开始/.test(tpl), '计划表说明里没有写明「第 1 步从现在开始、之后接上一步完成时刻」');
+need(/v-for="t in targetsView"/.test(tpl) && /fmtBJFull\(t\.end_seconds\)/.test(tpl)
+     && /at: fmtBJ\(end_seconds\)/.test(appSrc),
+  '目标卡片没有给出「预计（北京时间）练完」的累计时间点');
+need(/fmtBJFull\(summary\.seconds\)/.test(tpl), '计划总时长没有给出北京时间完成点');
+need(/fmtBJFull\(q\.end_seconds\)/.test(tpl) && /fmtBJ\(acc\)/.test(appSrc), '训练队列时间点没有走北京时间');
+/* 队列「剩余时间」口径：训练中那一级必须用 ESI 的剩余段 SP（training_start_sp → level_end_sp）
+ * 反推速率，不能拿整级时长 × 时间进度（队列项可能带着已练进度开训，那样剩余会被高估）。 */
+need(/q\.training \? '训练中' : '排队'/.test(tpl) && /qtag/.test(html),
+  '训练队列没有区分「训练中 / 排队」');
+need(/training_start_sp/.test(appSrc) && /level_end_sp/.test(appSrc) && /level_start_sp/.test(appSrc),
+  '队列剩余时间没有用 ESI 的 SP 明细（training_start_sp / level_start_sp / level_end_sp）');
+need(/queueView\(\)[\s\S]*?training:/.test(appSrc) && /queueItemSp\(it\)/.test(appSrc),
+  'queueView 没有标记 training / 调用 queueItemSp');
+need(/第 1 项从「现在」起算/.test(tpl), '队列说明里没有写明「第 1 项从现在起算、之后接上一项完成时刻」');
+need(/:disabled="!canEditAttrs"/.test(tpl), '属性框 / 预设没有按登录态禁用');
+need(/canEditAttrs\(\) \{ return this\.loggedIn; \}/.test(appSrc), 'canEditAttrs 没有跟随登录态');
+console.log('技能详情等级三态 + 时间口径审计通过（模板 / CSS / app.js 三处一致）');
 
 
 /* ---------- 5) 移动端适配审计 ----------

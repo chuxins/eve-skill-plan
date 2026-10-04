@@ -1,4 +1,4 @@
-"""eve-skill-plan Web 应用（Flask，监听 :8091）。
+"""eve-skill-plan Web 应用（Flask，监听 :8092）。
 
 - 前端：/（static/index.html，注入静态资源版本号）
 - 技能库：/api/skillgroups、/api/skills、/api/skill/<tid>
@@ -7,7 +7,7 @@
 - 计划：/api/plan（POST 复算）、/api/plan/txt（导出）、/api/plans（保存/读取/删除）
 - 角色：/api/characters（仅当前登录角色）、/api/characters/<cid>/overview（技能+属性+队列，仅本人可读）、
   DELETE /api/characters/<cid>（退出登录，仅清会话）
-- OAuth：/api/oauth/url → 浏览器跳转 EVE SSO → nginx 反代 /skills/oauth/callback
+- OAuth：/api/oauth/url → 浏览器跳转 EVE SSO → nginx 反代 /eveskillplanner/oauth/callback
 
 SSO 隔离：OAuth 成功后签发会话 Cookie（esp_session）。
 - 保存的技能训练计划按「创建它的登录角色」隔离 —— 未登录无法保存（POST /api/plans → 401），
@@ -15,7 +15,7 @@ SSO 隔离：OAuth 成功后签发会话 Cookie（esp_session）。
 - 技能读取同样隔离：只能读取当前登录角色的技能/属性/队列（未登录 401、非当前角色 403），
   /api/characters 只返回当前登录角色 —— 前端没有「切换角色」入口，切换需退出登录后重新登录。
 
-nginx 里 /skills/ 前缀会被剥掉（proxy_pass 末尾带 /），因此本站路径都是裸的，
+nginx 里 /eveskillplanner/ 前缀会被剥掉（rewrite 到裸路径后再 proxy_pass），因此本站路径都是裸的，
 前端一律用相对路径（static/…、api/…），换部署前缀不用改代码。
 """
 
@@ -211,10 +211,10 @@ def _asset_version():
 # ---------------------------------------------------------------- 静态
 @app.route("/")
 def page_index():
-    # 兼容「EVE 门户里把回调登记成站点根」的写法（形如 http://host/skills/）：
+    # 兼容「EVE 门户里把回调登记成站点根」的写法（形如 https://eve-tools.xyz/eveskillplanner/）：
     # 此时 SSO 会把 ?code=…&state=… 送到根路径，这里原样转交给 /oauth/callback。
-    # 用相对路径（"./oauth/callback"）而非绝对路径，因为 nginx 会剥掉 /skills 前缀：
-    # 浏览器看到的是 /skills/…，Flask 看到的是 /…（与 /oauth/callback 自身的回跳一致）。
+    # 用相对路径（"./oauth/callback"）而非绝对路径，因为 nginx 会剥掉 /eveskillplanner 前缀：
+    # 浏览器看到的是 /eveskillplanner/…，Flask 看到的是 /…（与 /oauth/callback 自身的回跳一致）。
     if request.args.get("code") and request.args.get("state"):
         return redirect("./oauth/callback?" + urlencode(request.args))
     with open(os.path.join(config.STATIC_DIR, "index.html"), encoding="utf-8") as f:
@@ -620,6 +620,12 @@ def api_character_overview(cid):
             sk = idx.get(int(q.get("skill_id") or 0))
             item["skill_name"] = sk["name"] if sk else f"#{q.get('skill_id')}"
             item["skill_name_en"] = sk["name_en"] if sk else ""
+            # 带上 rank + 主/副属性：前端才能按「当前属性」即时复算队列时间点
+            # （属性一改，时间点立刻跟着变；ESI 的 start/finish_date 仍原样保留）
+            if sk:
+                p_key, s_key = training.skill_attrs(sk)
+                item["rank"] = sk.get("rank", 1)
+                item["primary"], item["secondary"] = p_key, s_key
             out["queue"].append(item)
     except Exception as exc:
         out["queue"] = None
@@ -675,7 +681,7 @@ def oauth_callback():
     session["cid"] = int(result["id"])
     session["name"] = result["name"]
     log.info("角色 %s(%s) 授权成功并登录，scopes=%s", result["name"], result["id"], result["scopes"])
-    # 回调路径被 nginx 剥掉 /skills 前缀，故用相对路径回站点根（index.html 读 ?cid=）
+    # 回调路径被 nginx 剥掉 /eveskillplanner 前缀，故用相对路径回站点根（index.html 读 ?cid=）
     return redirect(pending.get("next") or f"./?cid={result['id']}")
 
 

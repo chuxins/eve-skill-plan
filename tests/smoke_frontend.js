@@ -2,15 +2,15 @@
  * 在沙箱里加载 util.js + app.js（createApp 用桩捕获配置对象），把 data/computed/methods
  * 和挂到实例上的模板函数（app.config.globalProperties）组装成一个普通实例，
  * 然后对着**真实运行中的后端**跑一遍主要交互流程。
- * 用法：node tests/smoke_frontend.js          （默认 http://127.0.0.1:8091/）
- *       BASE=http://127.0.0.1/skills/ node tests/smoke_frontend.js
+ * 用法：node tests/smoke_frontend.js          （默认 http://127.0.0.1:8092/）
+ *       BASE=http://127.0.0.1/eveskillplanner/ node tests/smoke_frontend.js   # 走 nginx
  */
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
-const BASE = (process.env.BASE || 'http://127.0.0.1:8091/').replace(/\/?$/, '/');
+const BASE = (process.env.BASE || 'http://127.0.0.1:8092/').replace(/\/?$/, '/');
 
 let pass = 0;
 const fails = [];
@@ -173,6 +173,7 @@ vm.createContext(sandbox);
 const src = ['static/util.js', 'static/app.js']
   .map(f => fs.readFileSync(path.join(ROOT, f), 'utf8')).join('\n') +
   '\n;globalThis.__util = { API, API_POST, n, fmtDur, fmtShort, remain, fmtWhen, fmtWhen2,' +
+  ' fmtBJ, fmtBJFull, fmtBJAt, spToLevel, trainSeconds,' +
   ' attrName, kindCN, lvRoman, toLevel, cacheGet, cacheSet, cacheDel, clearCharCache, icon };\n';
 vm.runInContext(src, sandbox, { filename: 'frontend-bundle.js' });
 const U = sandbox.__util;
@@ -208,6 +209,8 @@ Object.assign(inst, opts.methods, published);
     'attrName / n 已挂到 globalProperties', Object.keys(published || {}));
   ok(['fmtDur', 'fmtShort', 'fmtWhen', 'fmtWhen2', 'remain', 'kindCN', 'lvRoman', 'toLevel', 'icon']
     .every(k => typeof published[k] === 'function'), '其余模板函数也都在', Object.keys(published || {}));
+  ok(['fmtBJ', 'fmtBJFull', 'fmtBJAt'].every(k => typeof published[k] === 'function'),
+    '北京时间格式化函数已挂到 globalProperties', Object.keys(published || {}));
   ok(inst.attrName('perception') === '感知', '实例上取到的 attrName 可用');
 
   section('启动 boot()');
@@ -301,6 +304,21 @@ Object.assign(inst, opts.methods, published);
   ok(inst.plan.steps.every(s => s.level >= 1 && s.seconds > 0), '每步有等级与本步时长');
   ok(inst.plan.steps.every((s, i, a) => i === 0 || s.end_seconds >= a[i - 1].end_seconds),
     'steps 累计完成时间单调');
+  eq(inst.plan.steps[0].start_seconds, 0, '计划第 1 步从「现在」开始（start_seconds=0）');
+  ok(inst.plan.steps.every((s, i, a) => i === 0 || Math.abs(s.start_seconds - a[i - 1].end_seconds) < 0.05),
+    '每步从「上一级练完的时刻」开始（时间点首尾相接）',
+    inst.plan.steps.slice(0, 3).map(s => [s.start_seconds, s.end_seconds]));
+  ok(inst.plan.rows.every((r, i, a) => i === 0 || Math.abs(r.start_seconds - a[i - 1].end_seconds) < 0.05),
+    'rows 同样首尾相接（已满足的行不占用时间）',
+    inst.plan.rows.map(r => [r.name, r.start_seconds, r.end_seconds]));
+  /* 目标卡片：练完时间点 = 该目标名下最晚的累计完成时间（从「现在」起算，北京时间） */
+  const tv = inst.targetsView;
+  eq(tv.length, 1, 'targetsView 与目标数一致');
+  const mine = inst.plan.rows.filter(r => (r.targets || []).includes(tv[0].tid));
+  eq(tv[0].end_seconds, Math.max.apply(null, mine.map(r => r.end_seconds)),
+    '目标练完时间 = 名下最晚的累计完成时间');
+  eq(tv[0].at, U.fmtBJ(tv[0].end_seconds), '目标练完时间走北京时间');
+  eq(tv[0].done, false, '目标还有缺口 → 未满足（显示「预计 … 练完」）');
   eq(inst.plan.steps[inst.plan.steps.length - 1].end_seconds, inst.summary.seconds,
     '最后一步完成时间 = 总时长');
   ok(inst.summary.skills_total === inst.summary.skills_missing + inst.summary.skills_owned,
@@ -421,6 +439,126 @@ Object.assign(inst, opts.methods, published);
   ok(sandbox.location.href.includes('login.eveonline.com') || !!inst.err, 'login() 拿到 SSO 地址或报错',
     sandbox.location.href || inst.err);
   sandbox.location.href = '';
+
+  section('北京时间 / 训练队列按属性复算 / 技能等级三态');
+  /* 北京时间 = UTC+8，与浏览器所在时区无关 */
+  const _bj = new Date(Date.now() + 8 * 3600 * 1000);
+  const _p2 = x => String(x).padStart(2, '0');
+  const _bjStr = ms => `${_p2(ms.getUTCMonth() + 1)}-${_p2(ms.getUTCDate())} ${_p2(ms.getUTCHours())}:${_p2(ms.getUTCMinutes())}`;
+  eq(U.fmtBJ(0), _bjStr(_bj), 'fmtBJ(0) = 此刻北京时间');
+  eq(U.fmtBJ(3600), _bjStr(new Date(_bj.getTime() + 3600e3)), 'fmtBJ(3600) = 一小时后的北京时间');
+  ok(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(U.fmtBJFull(90)), 'fmtBJFull 带年份', U.fmtBJFull(90));
+  eq(U.fmtBJAt('2026-10-04T12:00:00Z'), '10-04 20:00', 'fmtBJAt：12:00Z = 北京 20:00');
+  eq(U.fmtBJAt('not-a-date'), '—', 'fmtBJAt 非法输入兜底');
+
+  /* 本地训练时长公式必须与后端逐级时间同口径（/api/skill/3300 无角色 → 默认 17 点） */
+  const s3300 = await U.API('api/skill/3300');
+  const _lp = s3300.skill.primary, _ls = s3300.skill.secondary, _lr = s3300.skill.rank;
+  const tl5 = s3300.level_seconds['5'];
+  const loc5 = U.trainSeconds(_lr, _lp, _ls, s3300.attributes, 0, 5);
+  ok(Math.abs(loc5 - tl5) / tl5 < 0.02, '本地 trainSeconds 5 级 ≈ 后端 level_seconds[5]',
+    [Math.round(loc5), tl5]);
+  const tl34 = s3300.level_seconds['4'] - s3300.level_seconds['3'];
+  ok(Math.abs(U.trainSeconds(_lr, _lp, _ls, s3300.attributes, 3, 4) - tl34) / tl34 < 0.02,
+    '本地 trainSeconds 3→4 级 ≈ 后端逐级差');
+
+  /* 未登录：属性固定默认 17，属性框 / 预设不可改 */
+  eq(inst.canEditAttrs, false, '未登录不能改属性');
+  ok(Object.values(inst.attrs).every(v => v === 17), '未登录属性固定默认 17', inst.attrs);
+
+  /* 登录 + 队列：时间点按当前属性复算，改属性立即生效 */
+  inst.loginCid = 1234567; inst.loginName = '冒烟测试角色';
+  eq(inst.canEditAttrs, true, '登录后可改属性');
+  inst.attrs = { charisma: 17, intelligence: 17, memory: 17, perception: 17, willpower: 17 };
+  inst.queue = [
+    { queue_position: 0, skill_id: 3300, skill_name: '射击学', finished_level: 5, rank: 1,
+      primary: 'perception', secondary: 'willpower',
+      start_date: new Date(Date.now() - 3600e3).toISOString(),
+      finish_date: new Date(Date.now() + 3600e3).toISOString() },
+    { queue_position: 1, skill_id: 3301, skill_name: '导弹发射器操作', finished_level: 4, rank: 1,
+      primary: 'perception', secondary: 'willpower' },
+  ];
+  const qv = inst.queueView;
+  eq(qv.length, 2, 'queueView 含 2 项');
+  ok(qv[0].seconds > 0 && qv[1].end_seconds > qv[0].end_seconds, '队列按顺序累计完成时间',
+    qv.map(q => Math.round(q.end_seconds)));
+  ok(/^\d{2}-\d{2} \d{2}:\d{2}$/.test(qv[1].at), '队列时间点为北京时间 MM-DD HH:mm', qv[1].at);
+  const qBefore = inst.queueView.map(q => q.end_seconds);
+  inst.attrs = { charisma: 17, intelligence: 17, memory: 17, perception: 34, willpower: 34 };
+  const qAfter = inst.queueView.map(q => q.end_seconds);
+  ok(qAfter[1] < qBefore[1], '提高主/副属性 → 队列总用时立即变短',
+    [Math.round(qBefore[1]), Math.round(qAfter[1])]);
+  /* 「重读技能」= pickChar(cid)：属性复位成角色真实属性（桩里全 17），队列随之复位 */
+  mockAuthed = true;
+  await inst.pickChar(1234567, true);
+  eq(inst.attrs, { charisma: 17, intelligence: 17, memory: 17, perception: 17, willpower: 17 },
+    '「重读技能」把属性复位为角色真实属性', inst.attrs);
+  eq(inst.queueView.length, 0, '「重读技能」后队列按新属性复位（桩返回空队列）');
+  mockAuthed = false;
+
+  /* 队列：正在训练的那一级按 ESI「剩余」时间算（不是整级总时长）；
+   * 排队的整级按当前属性算整级时长；第 1 项从现在起算，之后接上一项练完的时刻。 */
+  const _iso = ms => new Date(ms).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const _rate = 31 + 22 / 2;                       // ESI 用的属性 31/22 → 42 SP/分钟
+  const _leftS = 3600;                             // ESI 说这一级还剩 1 小时
+  const _esiMin = (1280000 - 797697) / _rate;      // 这一段（training_start_sp → level_end_sp）的分钟数
+  const _t0 = Date.now(), _fin0 = _t0 + _leftS * 1000;
+  const _sta0 = _fin0 - _esiMin * 60000;
+  const _fin1 = _fin0 + 47.6 * 60000;              // 排队项：整级 2000 SP @42 → 47.6 分钟
+  inst.attrs = { charisma: 17, intelligence: 17, memory: 17, perception: 31, willpower: 22 };
+  inst.queue = [
+    { queue_position: 0, skill_id: 3326, skill_name: '巡航导弹概论', finished_level: 5, rank: 5,
+      primary: 'perception', secondary: 'willpower',
+      // 带着已练进度开训：training_start_sp(797697) 远大于 level_start_sp(226275)
+      level_start_sp: 226275, training_start_sp: 797697, level_end_sp: 1280000,
+      start_date: _iso(_sta0), finish_date: _iso(_fin0) },
+    { queue_position: 1, skill_id: 20212, skill_name: '导弹专业研究', finished_level: 1, rank: 8,
+      primary: 'perception', secondary: 'willpower',
+      level_start_sp: 0, training_start_sp: 0, level_end_sp: 2000,
+      start_date: _iso(_fin0), finish_date: _iso(_fin1) },
+  ];
+  const qv1 = inst.queueView;
+  const _full0 = U.trainSeconds(5, 'perception', 'willpower', inst.attrs, 4, 5);   // 整级总时长
+  eq(qv1[0].training, true, '第 1 项 = 正在训练（training 标记）');
+  ok(Math.abs(qv1[0].seconds - _leftS) < 2, '正在训练项按 ESI「剩余」时间（≈1 小时）',
+    [Math.round(qv1[0].seconds), Math.round(_leftS)]);
+  ok(qv1[0].seconds < _full0 / 10,
+    '剩余时间远小于整级总时长 —— 回归：以前按「整级 × 时间进度」会把已练掉的部分也算进去',
+    [Math.round(qv1[0].seconds), Math.round(_full0)]);
+  eq(qv1[0].end_seconds, qv1[0].seconds, '第 1 项从「现在」起算（累计 = 本项用时）');
+  eq(qv1[0].at, U.fmtBJAt(_iso(_fin0)), '正在训练项的完成点 = ESI finish_date 的北京时间');
+  const _lvl1 = 2000 / _rate * 60;                 // 排队项整级时长（按当前属性）
+  ok(Math.abs(qv1[1].seconds - _lvl1) < 1, '排队项 = 整级时长（按当前属性）',
+    [Math.round(qv1[1].seconds), Math.round(_lvl1)]);
+  ok(Math.abs(qv1[1].end_seconds - (_leftS + _lvl1)) < 3,
+    '队列依次接上一项练完的时刻（第 2 项 = 第 1 项完成 + 整级时长）',
+    qv1.map(q => Math.round(q.end_seconds)));
+  /* 改属性：正在训练项只重算「还没练掉的 SP」那段（属性翻倍 → 用时减半）；排队项整级重算 */
+  inst.attrs = { charisma: 17, intelligence: 17, memory: 17, perception: 62, willpower: 44 };
+  ok(Math.abs(inst.queueView[0].seconds - _leftS / 2) < 3,
+    '属性翻倍 → 训练中项的剩余用时减半（只折算剩余 SP）', Math.round(inst.queueView[0].seconds));
+  inst.attrs = { charisma: 17, intelligence: 17, memory: 17, perception: 21, willpower: 17 };
+  ok(inst.queueView[0].seconds > _leftS, '属性降低 → 训练中项的剩余用时变长（42 ÷ 29.5）',
+    Math.round(inst.queueView[0].seconds));
+  /* ESI 没给 SP 明细（旧缓存）→ 退回 ESI 的剩余时间 */
+  inst.attrs = { charisma: 17, intelligence: 17, memory: 17, perception: 31, willpower: 22 };
+  inst.queue = [{ queue_position: 0, skill_id: 3300, skill_name: '射击学', finished_level: 5, rank: 1,
+    primary: 'perception', secondary: 'willpower',
+    start_date: _iso(_t0 - 3600e3), finish_date: _iso(_t0 + 3600e3) }];
+  ok(Math.abs(inst.queueView[0].seconds - 3600) < 5, '缺 ESI SP 明细时退回 finish_date 剩余时间',
+    Math.round(inst.queueView[0].seconds));
+
+  /* 技能详情等级三态：已学=learned（黑）/ 队列中=training（蓝）/ 未学=open（可加计划） */
+  inst.skill = { skill: { tid: 3300, name: '射击学', rank: 1, primary: 'perception', secondary: 'willpower' },
+    current: 3, level_seconds: {}, level_seconds_from_current: {}, prereqs: [], closure: [], consumers: [] };
+  inst.queue = [{ queue_position: 0, skill_id: 3300, finished_level: 4, rank: 1,
+    primary: 'perception', secondary: 'willpower' }];
+  eq(inst.skillLvState(3), 'learned', '已学等级 = learned（黑、不可点）');
+  eq(inst.skillLvState(4), 'training', '队列中等级 = training（蓝、不可点）');
+  eq(inst.skillLvState(5), 'open', '未学等级 = open（可加入计划）');
+  eq(inst.skillLvTitle(4), '正在训练队列中', '队列中等级的悬停提示');
+  ok(inst.skillLvTitle(3).includes('不能再加入') && inst.skillLvTitle(5).includes('加入训练计划'),
+    '已学 / 未学等级的悬停提示');
 
   console.log('\n通过 ' + pass + ' 项，失败 ' + fails.length + ' 项');
   if (fails.length) { console.log('失败项：\n - ' + fails.join('\n - ')); process.exit(1); }
